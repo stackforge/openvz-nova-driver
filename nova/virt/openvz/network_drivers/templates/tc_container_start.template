@@ -1,0 +1,8 @@
+tc qdisc add dev ${vz_iface} root handle 1: htb default 10
+tc class add dev ${vz_iface} parent 1: classid 1:1 htb rate ${line_speed}mbit ceil ${line_speed}mbit burst 15k
+tc class add dev ${vz_iface} parent 1:1 classid 1:${prio} htb rate ${bandwidth}mbit ceil ${bandwidth}mbit burst 15k
+tc qdisc add dev ${vz_iface} parent 1:${prio} handle ${prio}: sfq perturb 10
+tc filter replace dev ${vz_iface} protocol ip parent 1: prio ${prio} u32 match ip dst ${vz_address} flowid 1:${prio}
+tc class add dev ${host_iface} parent 1:1 classid 1:${prio} htb rate ${bandwidth}mbit ceil ${bandwidth}mbit burst 15k
+tc qdisc add dev ${host_iface} parent 1:${prio} handle ${prio}: sfq perturb 10
+tc filter replace dev ${host_iface} protocol ip parent 1: prio ${prio} u32 match ip src ${vz_address} flowid 1:${prio}
