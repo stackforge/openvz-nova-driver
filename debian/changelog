@@ -1,0 +1,5 @@
+nova-compute-openvz (1.0-1) UNRELEASED; urgency=low
+
+  * Initial release. (Closes: #XXXXXX)
+
+ -- imsplitbit <imsplitbit@gmail.com>  Mon, 29 Apr 2013 15:51:03 -0500
