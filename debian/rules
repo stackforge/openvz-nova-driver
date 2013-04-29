@@ -1,0 +1,36 @@
+#!/usr/bin/make -f
+
+export MASTER_HEAD=`git log -1 --format=%h master`
+export DEVELOPMENT_HEAD=`git log -1 --format=%h development`
+export CHANGELOGENTRY="$(VERSION_STRING)"
+
+%:
+	dh $@ --with python2
+
+# If you want to run an automated build (for something like Jenkins), 
+# this is the thing for you.  Just run:
+#
+#   debian/rules automated-build
+#
+automated-build:
+	# Make a backup of the upstream debian/control
+	cp -av debian/control debian/control.pristine
+
+	# Add the current git hash to the Description field of the package
+	sed -i "s/^Description: .*$$/& (master: $(MASTER_HEAD) development: $(DEVELOPMENT_HEAD))/" debian/control
+
+	# Update the changelog
+	dch -v $(CHANGELOGENTRY) "Automated build."
+
+	# Clean up
+	dh clean
+
+	# Build it
+	dh build --with python2
+	fakeroot dh binary --with python2
+
+	# Put the upstream debian/control back in place
+	mv -v debian/control.pristine debian/control
+
+override_dh_install:
+	dh_install --fail-missing

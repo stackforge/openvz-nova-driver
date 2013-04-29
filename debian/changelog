@@ -1,4 +1,4 @@
-nova-compute-openvz (1.0-1) UNRELEASED; urgency=low
+openvz-nova-driver (1.0-1) UNRELEASED; urgency=low
 
   * Initial release. (Closes: #XXXXXX)
 

@@ -1,10 +1,10 @@
-Source: nova-compute-openvz
+Source: openvz-nova-driver
 Maintainer: Daniel Salinas <imsplitbit@gmail.com>
 Priority: optional
-Build-Depends: python-setuptools (>= 0.6b3), debhelper (>= 7.4.3), python-support (>= 0.8.4)
+Build-Depends: debhelper (>= 7.4.3), python-support (>= 0.8.4)
 Standards-Version: 3.8.4
 
-Package: nova-compute-openvz
+Package: openvz-nova-driver
 Architecture: all
 Depends: ${misc:Depends},
  ${python:Depends},
