@@ -1,36 +1,36 @@
-#!/usr/bin/make -f
+#! /usr/bin/make -f
 
-export MASTER_HEAD=`git log -1 --format=%h master`
-export DEVELOPMENT_HEAD=`git log -1 --format=%h development`
-export CHANGELOGENTRY="$(VERSION_STRING)"
+SHELL = /bin/bash
 
-%:
-	dh $@ --with python2
+# all versions
+PYVERS	:= $(shell pyversions -vs)
+VER	:= $(shell /usr/bin/python -c 'import sys; print sys.version[:3]')
 
-# If you want to run an automated build (for something like Jenkins), 
-# this is the thing for you.  Just run:
-#
-#   debian/rules automated-build
-#
-automated-build:
-	# Make a backup of the upstream debian/control
-	cp -av debian/control debian/control.pristine
+clean:
+	: # rm -rf *-stamp build-python* build
+	: # rm -rf $(addprefix debian/,$(packages)) debian/files debian/substvars
+	: # rm -rf _trial_temp test.log
+	: # find . -name "*.pyc" |xargs -r rm
+	dh_clean
 
-	# Add the current git hash to the Description field of the package
-	sed -i "s/^Description: .*$$/& (master: $(MASTER_HEAD) development: $(DEVELOPMENT_HEAD))/" debian/control
+binary-arch: binary-indep
 
-	# Update the changelog
-	dch -v $(CHANGELOGENTRY) "Automated build."
+binary-indep: 
+	dh_installdirs /usr/lib/python$(PYVERS)/dist-packages/nova/virt /etc/nova/rootwrap.d
+	cp -R $(CURDIR)/nova/virt/openvz $(CURDIR)/debian/openvz-nova-driver/usr/lib/python$(PYVERS)/dist-packages/nova/virt
+	install -d -m 755 $(CURDIR)/debian/openvz-nova-driver/usr/lib/python$(PYVERS)/dist-packages/nova/virt
+	install -D -m 0400 $(CURDIR)/etc/nova/rootwrap.d/openvz.filters $(CURDIR)/debian/openvz-nova-driver/etc/nova/rootwrap.d/
+	dh_testdir
+	dh_testroot
+	dh_installchangelogs -i
+	dh_installdocs -i -A README.md
+	dh_installmenu -i
+	dh_compress -i -X.py
+	dh_fixperms -i
+	dh_installdeb -i
+	dh_gencontrol -i
+	dh_md5sums -i
+	dh_builddeb -i
 
-	# Clean up
-	dh clean
-
-	# Build it
-	dh build --with python2
-	fakeroot dh binary --with python2
-
-	# Put the upstream debian/control back in place
-	mv -v debian/control.pristine debian/control
-
-override_dh_install:
-	dh_install --fail-missing
+binary: binary-indep
+.PHONY: build clean binary-indep binary
