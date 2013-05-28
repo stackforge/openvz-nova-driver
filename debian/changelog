@@ -1,6 +1,8 @@
-openvz-nova-driver (1.0-3) precise; urgency=low
+openvz-nova-driver (1.1-02) precise; urgency=low
 
   * Released for known working distributions. (Closes: #XXXXXX)
   * Releasing as noarch
+  * Released Migrations
+  * Fixed broken copyright headers
 
  -- Daniel Salinas <imsplitbit@gmail.com>  Mon, 07 May 2013 15:51:03 -0500
