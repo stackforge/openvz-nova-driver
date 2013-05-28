@@ -16,9 +16,11 @@ clean:
 binary-arch: binary-indep
 
 binary-indep: 
-	dh_installdirs /usr/lib/python$(PYVERS)/dist-packages/nova/virt /etc/nova/rootwrap.d
+	dh_installdirs /usr/lib/python$(PYVERS)/dist-packages/nova/virt /usr/lib/python$(PYVERS)/dist-packages/nova/tests /etc/nova/rootwrap.d
 	cp -R $(CURDIR)/nova/virt/openvz $(CURDIR)/debian/openvz-nova-driver/usr/lib/python$(PYVERS)/dist-packages/nova/virt
+	cp -R $(CURDIR)/nova/tests/openvz $(CURDIR)/debian/openvz-nova-driver/usr/lib/python$(PYVERS)/dist-packages/nova/tests
 	install -d -m 755 $(CURDIR)/debian/openvz-nova-driver/usr/lib/python$(PYVERS)/dist-packages/nova/virt
+	install -d -m 755 $(CURDIR)/debian/openvz-nova-driver/usr/lib/python$(PYVERS)/dist-packages/nova/tests
 	install -D -m 0400 $(CURDIR)/etc/nova/rootwrap.d/openvz.filters $(CURDIR)/debian/openvz-nova-driver/etc/nova/rootwrap.d/
 	dh_testdir
 	dh_testroot

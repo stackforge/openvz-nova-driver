@@ -1,6 +1,7 @@
 # nova-rootwrap command filters for openvz nodes
 # This file should be owned by (and only-writeable by) the root user
 
+[Filters]
 # nova/virt/openvz/utils.py: 'mount', '-o', 'defaults' ...
 mount: CommandFilter, /bin/mount, root
 
@@ -70,3 +71,15 @@ sfdisk: CommandFilter, /sbin/sfdisk, root
 
 # nova/virt/openvz/volume.py
 mknod: CommandFilter, /bin/mknod, root
+
+# nova/virt/openvz/driver.py
+vzmigrate: CommandFilter, /usr/sbin/vzmigrate, root
+
+# nova/virt/openvz/migrate.py
+cp: CommandFilter, /bin/cp, root
+
+# nova/virt/openvz/utils.py
+tar: CommandFilter, /bin/tar, root
+
+# nova/virt/openvz/migration_drivers/rsync.py
+rsync: CommandFilter, /usr/bin/rsync, root

@@ -63,11 +63,11 @@ class OVZExtStorage(object):
         :return: list
         """
         try:
-            self.volumes = json.loads(self.local_store.contents[0])
+            self._volumes = json.loads(self.local_store.contents[0])
         except (ValueError, IndexError):
-            self.volumes = dict()
+            self._volumes = dict()
 
-    def add_volume(self, device, volume_info, overwrite=True):
+    def add_volume(self, device, volume_info):
         """
         Add a volume to local storage so volumes can be reconnected to in
         emergencies without nova services if need be.
@@ -76,14 +76,7 @@ class OVZExtStorage(object):
         :param volume_info: Nova volume information from block_device_map
         :return: None
         """
-        if device in self.volumes and not overwrite:
-            msg = (_('You told me not to overwrite volume info for device: '
-                     '%(device)s on instance: %(instnace_id)s') %
-                   {'device': device, 'instance_id': self.instance_id})
-            LOG.error(msg)
-            raise KeyError(msg)
-
-        self.volumes[device] = volume_info
+        self._volumes[device] = volume_info
 
     def remove_volume(self, device):
         """
@@ -93,7 +86,7 @@ class OVZExtStorage(object):
         :return: None
         """
         try:
-            self.volumes.pop(device)
+            self._volumes.pop(device)
             LOG.debug(
                 _('Removed volume %(device)s from instance %(instance_id)s') %
                 {'device': device, 'instance_id': self.instance_id})
@@ -105,10 +98,20 @@ class OVZExtStorage(object):
 
     def save(self):
         """
-        Flushes contents of self.volumes to disk for persistance
+        Flushes contents of self._volumes to disk for persistance
 
         :return: None
         """
-        self.local_store.set_contents(json.dumps(self.volumes))
+        self.local_store.set_contents(json.dumps(self._volumes))
         with self.local_store:
             self.local_store.write()
+
+    def volumes(self):
+        """
+        Simple generator to give back the volumes in an iterable and
+        adventurous way.
+
+        :return: device name, connection info
+        """
+        for key in self._volumes.keys():
+            yield key, self._volumes[key]

@@ -197,7 +197,7 @@ class OVZFile(object):
             raise TypeError(_("I don't know what to do with this type: %s") %
                             type(new_contents))
 
-    def run_contents(self):
+    def run_contents(self, raise_on_error=True):
         # Because only approved commands in rootwrap can be executed we
         # don't need to worry about unwanted command injection
         for line in self.contents:
@@ -209,7 +209,9 @@ class OVZFile(object):
                             _('Running line from %(filename)s: %(line)s') %
                             {'filename': self.filename, 'line': line})
                         line = line.split()
-                        ovz_utils.execute(*line, run_as_root=True)
+                        ovz_utils.execute(
+                            *line, run_as_root=True,
+                            raise_on_error=raise_on_error)
                     except exception.InstanceUnacceptable as err:
                         LOG.error(_('Cannot execute: %s') % line)
                         LOG.error(err)
