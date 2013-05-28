@@ -23,6 +23,7 @@ is sketchy at best.
 import glob
 from nova import exception
 from nova.openstack.common import log as logging
+from nova.openstack.common import processutils
 from nova.virt.openvz import file as ovzfile
 from nova.virt.openvz import utils as ovz_utils
 import os
@@ -68,11 +69,11 @@ class OVZVolume(object):
         """
         self._attach_raw_devices()
 
-    def detach(self):
+    def detach(self, container_is_running=True):
         """
         Public method for detaching volumes from an instance.
         """
-        self._detach_raw_devices()
+        self._detach_raw_devices(container_is_running)
 
     def device_name(self):
         """
@@ -92,7 +93,7 @@ class OVZVolume(object):
             ovz_utils.execute('blockdev', '--getsize64', device_path,
                               attempts=CONF.ovz_system_num_tries,
                               run_as_root=True)
-        except exception.ProcessExecutionError:
+        except processutils.ProcessExecutionError:
             raise exception.InvalidDevicePath(path=device_path)
 
     def _find_device(self):
@@ -312,7 +313,7 @@ class OVZVolume(object):
 
         self._set_block_devices(devices)
 
-    def _del_block_devices(self, new_devices):
+    def _del_block_devices(self, new_devices, container_is_running=True):
         """
         New devices should be a list that looks like this:
 
@@ -327,7 +328,7 @@ class OVZVolume(object):
             if dev in devices:
                 devices.remove(dev)
 
-        self._set_block_devices(devices)
+        self._set_block_devices(devices, container_is_running)
 
     def _detach_remaining_block_devices(self):
         """
@@ -349,7 +350,7 @@ class OVZVolume(object):
 
         ovz_utils.execute(*cmd, run_as_root=True)
 
-    def _set_block_devices(self, devices):
+    def _set_block_devices(self, devices, container_is_running=True):
         """
         Run the command necessary to save the block device permissions to
         the container config file so that they persist on reboot.
@@ -368,7 +369,9 @@ class OVZVolume(object):
             # if the device list is empty this means that it's the last device
             # attached to the container and we need to run some special case
             # code to remove that device.
-            self._detach_remaining_block_devices()
+            if container_is_running:
+                self._detach_remaining_block_devices()
+
             self._remove_all_device_entries()
 
     def _remove_all_device_entries(self):
@@ -389,7 +392,7 @@ class OVZVolume(object):
                     ct_conf.contents.remove(line)
                     ct_conf.write()
 
-    def _detach_raw_devices(self):
+    def _detach_raw_devices(self, container_is_running=True):
         """
         Remove the associated devices from the container.
 
@@ -409,7 +412,11 @@ class OVZVolume(object):
             # TODO(imsplitbit): research to see if running this remove command
             # adhoc is necessary or if just removing the device from the config
             # file is adequate.
-            self._detach_raw_device(maj_min['major'], maj_min['minor'])
+            if container_is_running:
+                # If the container isn't running this command makes things
+                # unhappy.  Very very unhappy.
+                self._detach_raw_device(maj_min['major'], maj_min['minor'])
+
             m = re.match('^(?P<device>/[a-z]+/[a-z]+)(?P<part>\\d*)$', dev)
             device_name = self.mountpoint
 
@@ -419,7 +426,7 @@ class OVZVolume(object):
             self._delete_device(device_name)
 
         if bdevs_conf:
-            self._del_block_devices(bdevs_conf)
+            self._del_block_devices(bdevs_conf, container_is_running)
 
     def _detach_raw_device(self, major, minor):
         """

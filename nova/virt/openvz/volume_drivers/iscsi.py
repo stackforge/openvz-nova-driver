@@ -22,6 +22,7 @@ is sketchy at best.
 from nova import exception
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import processutils
 from nova.virt.openvz import utils as ovz_utils
 from nova.virt.openvz import volume as ovzvolume
 from oslo.config import cfg
@@ -122,16 +123,16 @@ class OVZISCSIStorageDriver(ovzvolume.OVZVolume):
                 self._run_iscsiadm(("--login",))
                 LOG.debug(_('iSCSI session for %s connected') %
                           self.iscsi_properties['target_iqn'])
-        except exception.ProcessExecutionError as err:
+        except processutils.ProcessExecutionError as err:
             if "15 - already exists" in err.message:
                 raise exception.VolumeUnattached()
             LOG.error(err)
             raise exception.VolumeNotFound(_("iSCSI device %s not found") %
                                            self.iscsi_properties['target_iqn'])
 
-    def detach(self, raise_on_error=True):
+    def detach(self, container_is_running=True):
         """Detach the volume from instance_name."""
-        super(OVZISCSIStorageDriver, self).detach()
+        super(OVZISCSIStorageDriver, self).detach(container_is_running)
         self._detach_iscsi()
 
     @lockutils.synchronized('iscsiadm_lock', 'openvz-')
@@ -157,7 +158,7 @@ class OVZISCSIStorageDriver(ovzvolume.OVZVolume):
                     (self.iscsi_properties['target_portal'],
                      self.iscsi_properties['target_iqn'],
                      self.iscsi_properties['target_lun']))
-        except exception.ProcessExecutionError as err:
+        except processutils.ProcessExecutionError as err:
             LOG.error(err)
             raise exception.ISCSITargetNotFoundForVolume(
                 _("Error rescanning iscsi device: %s") %

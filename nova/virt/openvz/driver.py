@@ -29,13 +29,14 @@ from nova import exception
 from nova.network import linux_net
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
-from nova import utils
+from nova.openstack.common import loopingcall
 from nova.virt import driver
 from nova.virt import images
 from nova.virt.openvz import file as ovzfile
 from nova.virt.openvz.file_ext import boot as ovzboot
 from nova.virt.openvz.file_ext import ext_storage
 from nova.virt.openvz.file_ext import shutdown as ovzshutdown
+from nova.virt.openvz import migration as ovz_migration
 from nova.virt.openvz import network as ovznetwork
 from nova.virt.openvz.network_drivers import tc as ovztc
 from nova.virt.openvz import utils as ovz_utils
@@ -43,6 +44,7 @@ from nova.virt.openvz.volume_drivers import iscsi as ovziscsi
 import os
 from oslo.config import cfg
 import socket
+import time
 
 openvz_conn_opts = [
     cfg.StrOpt('ovz_template_path',
@@ -85,6 +87,28 @@ openvz_conn_opts = [
     cfg.StrOpt('ovz_tmp_dir',
                default='/var/tmp',
                help='Directory to use as temporary storage'),
+    cfg.StrOpt('ovz_migration_method',
+               default='python',
+               help='Method to use for migrations'),
+    cfg.StrOpt('ovz_migration_user',
+               default='nova',
+               help='User to use for running migrations'),
+    cfg.StrOpt('ovz_migration_transport',
+               default='rsync',
+               help='Method to use to transport migrations'),
+    cfg.StrOpt('ovz_vzmigrate_opts',
+               default=None,
+               help='Optional arguments to pass to vzmigrate'),
+    cfg.BoolOpt('ovz_vzmigrate_online_migration',
+                default=True,
+                help='Perform an online migration of a container'),
+    cfg.BoolOpt('ovz_vzmigrate_destroy_source_container_on_migrate',
+                default=True,
+                help='If a migration is successful do we delete the '
+                     'container on the old host'),
+    cfg.BoolOpt('ovz_vzmigrate_verbose_migration_logging',
+                default=True,
+                help='Log verbose messages from vzmigrate command'),
     cfg.BoolOpt('ovz_use_cpuunit',
                 default=True,
                 help='Use OpenVz cpuunits for guaranteed minimums'),
@@ -341,7 +365,7 @@ class OpenVzDriver(driver.ComputeDriver):
             for network, mapping in network_info:
                 if mapping['ips']:
                     has_networking = True
-        except Exception:
+        except ValueError:
             has_networking = False
         if has_networking:
             self.plug_vifs(instance, network_info)
@@ -366,7 +390,7 @@ class OpenVzDriver(driver.ComputeDriver):
                                     admin_password)
 
         # Begin making our looping async call
-        timer = utils.FixedIntervalLoopingCall()
+        timer = loopingcall.FixedIntervalLoopingCall()
 
         # I stole this from the libvirt driver but it is appropriate to
         # have this looping timer call so that if a VE doesn't start right
@@ -789,7 +813,8 @@ class OpenVzDriver(driver.ComputeDriver):
                           '--numfile', max_file_descriptors,
                           run_as_root=True)
 
-    def _set_instance_size(self, instance, network_info=None):
+    def _set_instance_size(self, instance, network_info=None,
+                           is_migration=False):
         """
         Given that these parameters make up and instance's 'size' we are
         bundling them together to make resizing an instance on the host
@@ -800,14 +825,32 @@ class OpenVzDriver(driver.ComputeDriver):
 
         LOG.debug(_('Instance system metadata: %s') % instance_size)
 
-        instance_memory_bytes = ((int(instance_size['instance_type_memory_mb'])
-                                  * 1024) * 1024)
-        instance_memory_pages = self._calc_pages(
-            instance_size['instance_type_memory_mb'])
-        percent_of_resource = self._percent_of_resource(
-            instance_size['instance_type_memory_mb'])
+        if is_migration:
+            instance_memory_mb = instance_size.get(
+                'new_instance_type_memory_mb', None)
+            if not instance_memory_mb:
+                instance_memory_mb = instance_size.get(
+                    'instance_type_memory_mb')
+            instance_vcpus = instance_size.get('new_instance_type_vcpus', None)
+            if not instance_vcpus:
+                instance_vcpus = instance_size.get('instance_type_vcpus')
+            instance_root_gb = instance_size.get(
+                'new_instance_type_root_gb', None)
+            if not instance_root_gb:
+                instance_root_gb = instance_size.get('instance_type_root_gb')
+        else:
+            instance_memory_mb = instance_size.get('instance_type_memory_mb')
+            instance_vcpus = instance_size.get('instance_type_vcpus')
+            instance_root_gb = instance_size.get('instance_type_root_gb')
 
-        instance_memory_mb = int(instance_size['instance_type_memory_mb'])
+        instance_memory_mb = int(instance_memory_mb)
+        instance_vcpus = int(instance_vcpus)
+        instance_root_gb = int(instance_root_gb)
+
+        instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
+        instance_memory_pages = self._calc_pages(instance_memory_mb)
+        percent_of_resource = self._percent_of_resource(instance_memory_mb)
+
         memory_unit_size = int(CONF.ovz_memory_unit_size)
         max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
         max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
@@ -821,18 +864,16 @@ class OpenVzDriver(driver.ComputeDriver):
         if CONF.ovz_use_cpulimit:
             self._set_cpulimit(instance, percent_of_resource)
         if CONF.ovz_use_cpus:
-            self._set_cpus(instance, instance_size['instance_type_vcpus'])
+            self._set_cpus(instance, instance_vcpus)
         if CONF.ovz_use_ioprio:
-            self._set_ioprio(
-                instance, int(instance_size['instance_type_memory_mb']))
+            self._set_ioprio(instance, instance_memory_mb)
         if CONF.ovz_use_disk_quotas:
-            self._set_diskspace(
-                instance, instance_size['instance_type_root_gb'])
+            self._set_diskspace(instance, instance_root_gb)
 
         if network_info:
-            self._generate_tc_rules(instance, network_info)
+            self._generate_tc_rules(instance, network_info, is_migration)
 
-    def _generate_tc_rules(self, instance, network_info):
+    def _generate_tc_rules(self, instance, network_info, is_migration=False):
         """
         Utility method to generate tc info for instances that have been
         resized and/or migrated
@@ -840,10 +881,22 @@ class OpenVzDriver(driver.ComputeDriver):
         LOG.debug(_('Setting network sizing'))
         bf = ovzboot.OVZBootFile(instance['id'], 755)
         sf = ovzshutdown.OVZShutdownFile(instance['id'], 755)
+
+        if not is_migration:
+            with sf:
+                LOG.debug(_('Cleaning TC rules for %s') % instance['id'])
+                sf.read()
+                sf.run_contents(raise_on_error=False)
+
+        # On resize we throw away existing tc_id and make a new one
+        # because the resize *could* have taken place on a different host
+        # where the tc_id is already in use.
+        meta = ovz_utils.read_instance_metadata(instance['id'])
+        tc_id = meta.get('tc_id', None)
+        if tc_id:
+            ovz_utils.remove_instance_metadata_key(instance['id'], 'tc_id')
+
         with sf:
-            LOG.debug(_('Cleaning TC rules for %s') % instance['id'])
-            sf.read()
-            sf.run_contents()
             sf.set_contents(list())
 
         with bf:
@@ -1148,7 +1201,7 @@ class OpenVzDriver(driver.ComputeDriver):
                     context, instance['uuid'],
                     {'power_state': power_state.NOSTATE})
                 LOG.error(_('During reboot %s disappeared') % instance['name'])
-                raise utils.LoopingCallDone
+                raise loopingcall.LoopingCallDone
 
             if state == power_state.RUNNING:
                 self.virtapi.instance_update(
@@ -1160,12 +1213,12 @@ class OpenVzDriver(driver.ComputeDriver):
                 with bf:
                     bf.read()
                     bf.run_contents()
-                raise utils.LoopingCallDone
+                raise loopingcall.LoopingCallDone
             elif state == power_state.NOSTATE:
                 LOG.error(_('Error rebooting %s') % instance['name'])
-                raise utils.LoopingCallDone
+                raise loopingcall.LoopingCallDone
 
-        timer = utils.FixedIntervalLoopingCall(_wait_for_reboot)
+        timer = loopingcall.FixedIntervalLoopingCall(_wait_for_reboot)
         return timer.start(interval=0.5)
 
     def _inject_files(self, instance, files_to_inject):
@@ -1339,7 +1392,7 @@ class OpenVzDriver(driver.ComputeDriver):
             self._detach_volumes(
                 instance, block_device_info)
 
-        timer = utils.FixedIntervalLoopingCall()
+        timer = loopingcall.FixedIntervalLoopingCall()
 
         def _wait_for_destroy():
             try:
@@ -1427,7 +1480,28 @@ class OpenVzDriver(driver.ComputeDriver):
         ext_str.add_volume(mountpoint, connection_info)
         ext_str.save()
 
-    def _detach_volumes(self, instance, block_device_mapping):
+    def _disconnect_volume(self, connection_info, instance, mountpoint,
+                           container_is_running=True):
+        """
+        Necessary for migrations to disconnect but not permanently remove
+        volumes.
+
+        :param connection_info:
+        :param instance:
+        :param mountpoint:
+        :return:
+        """
+        if connection_info['driver_volume_type'] == 'iscsi':
+            volume = ovziscsi.OVZISCSIStorageDriver(
+                instance['id'], mountpoint, connection_info)
+        else:
+            raise NotImplementedError(
+                _('There are no suitable storage drivers'))
+
+        volume.detach(container_is_running)
+
+    def _detach_volumes(self, instance, block_device_mapping,
+                        disconnect_only=False, container_is_running=True):
         """
         Move bulk operations of volume connections back into the driver as
         they are relevant here and no longer need to be in their own module.
@@ -1436,9 +1510,14 @@ class OpenVzDriver(driver.ComputeDriver):
         :return: None
         """
         for volume in block_device_mapping['block_device_mapping']:
-            self.detach_volume(
-                volume['connection_info'], instance,
-                volume['mount_device'])
+            if disconnect_only:
+                self._disconnect_volume(volume['connection_info'], instance,
+                                        volume['mount_device'],
+                                        container_is_running)
+            else:
+                self.detach_volume(
+                    volume['connection_info'], instance,
+                    volume['mount_device'])
 
     def detach_volume(self, connection_info, instance, mountpoint=None):
         """
@@ -1448,14 +1527,7 @@ class OpenVzDriver(driver.ComputeDriver):
         if not mountpoint:
             mountpoint = connection_info['mount_device']
 
-        if connection_info['driver_volume_type'] == 'iscsi':
-            volume = ovziscsi.OVZISCSIStorageDriver(
-                instance['id'], mountpoint, connection_info)
-        else:
-            raise NotImplementedError(
-                _('There are no suitable storage drivers'))
-
-        volume.detach()
+        self._disconnect_volume(connection_info, instance, mountpoint)
 
         # Remove storage connection info from the storage repo for the
         # instance.
@@ -1505,10 +1577,6 @@ class OpenVzDriver(driver.ComputeDriver):
 
         if state != new_state:
             state = new_state
-            # Set the new instance power_state
-            self.virtapi.instance_update(
-                context.get_admin_context(), instance['uuid'],
-                {'power_state': state})
 
         LOG.debug(
             _('OpenVz says instance %(id)s is in state %(state)s') %
@@ -1611,6 +1679,309 @@ class OpenVzDriver(driver.ComputeDriver):
             'initiator': self._initiator,
             'host': CONF.host
         }
+
+    def migrate_disk_and_power_off(self, context, instance, dest,
+                                   instance_type, network_info,
+                                   block_device_info=None):
+        """
+        Transfers the disk of a running instance in multiple phases, turning
+        off the instance before the end.
+        """
+        LOG.debug(_('Migration context: %s') % context)
+        LOG.debug(_('Migration instance: %s') % instance)
+        LOG.debug(_('Migration dest: %s') % dest)
+        LOG.debug(_('Migration instance_type: %s') % instance_type)
+        LOG.debug(_('Migration network_info: %s') % network_info)
+
+        if not dest:
+            LOG.error(_('No destination given to migration'))
+            raise exception.MigrationError(
+                _('Migration destination is: %s') % dest)
+
+        if dest == CONF.host:
+            # if this is an inplace resize we don't need to do any of this
+            LOG.debug(_('This is an inplace migration'))
+            ovz_utils.save_instance_metadata(instance['id'], 'migration_type',
+                                             'resize_in_place')
+            return
+
+        # Validate the ovz_migration_method flag
+        if CONF.ovz_migration_method not in ['vzmigrate', 'python']:
+            raise exception.MigrationError(
+                _('I do not understand your migration method'))
+
+        # Find out if we have external volumes, this will determine
+        # if we will freeze the instance and attempt to preserve state of if
+        # we will stop the instance completely to preserve the integrity
+        # of the attached filesystems.
+        if block_device_info:
+            live_migration = False
+            self._stop(instance)
+            self._detach_volumes(
+                instance, block_device_info, True, live_migration)
+        else:
+            live_migration = True
+            self.suspend(instance)
+
+        LOG.debug(_('ovz_migration_method is: %s') %
+                  CONF.ovz_migration_method)
+        if CONF.ovz_migration_method == 'vzmigrate':
+            self._vzmigration_send_to_host(instance, dest)
+        elif CONF.ovz_migration_method == 'python':
+            self._pymigration_send_to_host(
+                instance, ovz_utils.generate_network_dict(instance['id'],
+                                                          network_info),
+                block_device_info, dest, live_migration)
+
+    def _pymigration_send_to_host(self, instance, network_info,
+                                  block_device_info, dest, live_migration):
+        """
+        This performs a more complex but more secure migration using a pure
+        python implemented vz migration driver.
+        """
+        LOG.debug(_('Beginning pure python based migration'))
+        mobj = ovz_migration.OVZMigration(
+            instance, network_info, block_device_info, dest, live_migration)
+        mobj.dump_and_transfer_instance()
+        mobj.send()
+
+    def _vzmigration_send_to_host(self, instance, dest):
+        """
+        This performs a simple migration using openvz's supplied vzmigrate
+        script.  It requires shared keys for root across all hosts and
+        does not support containers with externally attached volumes. And
+        currently TC rules aren't preserved.
+        """
+        LOG.debug(_('Beginning vzmigrate based migration'))
+        cmd = ['vzmigrate']
+        if CONF.ovz_vzmigrate_opts:
+            if isinstance(CONF.ovz_vzmigrate_opts, str):
+                cmd += CONF.ovz_vzmigrate_opts.split()
+            elif isinstance(CONF.ovz_vzmigrate_opts, list):
+                cmd += CONF.ovz_vzmigrate_opts
+        if CONF.ovz_vzmigrate_online_migration:
+            cmd.append('--online')
+        if CONF.ovz_vzmigrate_destroy_source_container_on_migrate:
+            cmd += ['-r', 'yes']
+        if CONF.ovz_vzmigrate_verbose_migration_logging:
+            cmd.append('-v')
+        cmd.append(dest)
+        cmd.append(instance['id'])
+        LOG.debug(
+            _('Beginning the migration of %(instance_id)s to %(dest)s') %
+            {'instance_id': instance['id'], 'dest': dest})
+        out = ovz_utils.execute(*cmd, run_as_root=True)
+        LOG.debug(_('Output from migration process: %s') % out)
+
+    def finish_migration(self, context, migration, instance, disk_info,
+                         network_info, image_meta, resize_instance,
+                         block_device_info=None):
+        """Completes a resize, turning on the migrated instance
+
+        :param network_info:
+           :py:meth:`~nova.network.manager.NetworkManager.get_instance_nw_info`
+        :param image_meta: image object returned by nova.image.glance that
+                           defines the image from which this instance
+                           was created
+        """
+        # Get the instance metadata to see what we need to do
+        meta = ovz_utils.read_instance_metadata(instance['id'])
+        migration_type = meta.get('migration_type')
+
+        if migration_type == 'resize_in_place':
+            # This is a resize on the same host so its simple, resize
+            # in place and then exit the method
+            self._set_instance_size(instance, network_info, False)
+            return
+
+        if block_device_info:
+            # It is assumed that if there are externally attached volumes
+            # then this is not a live migration.
+            live_migration = False
+        else:
+            live_migration = True
+
+        if CONF.ovz_migration_method == 'vzmigrate':
+            self._vzmigrate_setup_dest_host(instance, network_info)
+        elif CONF.ovz_migration_method == 'python':
+            self._pymigrate_finish_migration(instance,
+                                             network_info,
+                                             live_migration)
+
+        if block_device_info:
+            # Once the files have been moved into place we need to attach
+            # volumes.
+            self._attach_volumes(instance, block_device_info)
+
+        # Somehow the name of the instance is lost in migration so
+        # set it here.
+        self._set_name(instance)
+
+        # The uuid is lost from the description field in the migration
+        # so set it here.
+        self._set_description(instance)
+
+        if resize_instance:
+            LOG.debug(_('A resize after migration was requested: %s') %
+                      instance['id'])
+            self._set_instance_size(instance, network_info, True)
+            LOG.debug(_('Resized instance after migration: %s') %
+                      instance['id'])
+        else:
+            LOG.debug(_('Regenerating TC rules for instance %s') %
+                      instance['id'])
+            self._generate_tc_rules(instance, network_info, True)
+            LOG.debug(_('Regenerated TC rules for instance %s') %
+                      instance['id'])
+
+        if not live_migration:
+            self._start(instance)
+
+    def _pymigrate_finish_migration(self, instance, network_info,
+                                    live_migration):
+        """
+        Take all transferred files and put them back into place to create a
+        working instance.
+        """
+        LOG.debug(_('Beginning python based finish_migration'))
+        interfaces = ovz_utils.generate_network_dict(instance['id'],
+                                                     network_info)
+        mobj = ovz_migration.OVZMigration(
+            instance, interfaces, None, live_migration)
+        mobj.undump_instance()
+
+        # Crude but we just need to give things time to settle before cleaning
+        # up all the dumped stuff
+        # TODO(imsplitbit): maybe a wait_for_start method with a looping
+        # timer is better here, will check into it soon
+        time.sleep(5)
+        mobj.cleanup_destination()
+        LOG.debug(_('Finished python based finish_migration'))
+
+    def _vzmigrate_setup_dest_host(self, instance, network_info):
+        """
+        Sequence to run on destination host should the migration be done
+        by the vzmigrate tools.
+        """
+        LOG.debug(_('Stopping instance: %s') % instance['id'])
+        self._stop(instance)
+        LOG.debug(_('Stopped instance: %s') % instance['id'])
+
+        self.plug_vifs(instance, network_info)
+
+        LOG.debug(_('Starting instance: %s') % instance['id'])
+        self._start(instance)
+        LOG.debug(_('Started instance: %s') % instance['id'])
+
+    def confirm_migration(self, migration, instance, network_info):
+        """
+        Run on the source host to confirm the migration and cleans up the
+        the files from the source host.
+        """
+        LOG.debug(_('Beginning confirm migration for %s') % instance['id'])
+
+        # Get the instance metadata to see what we need to do
+        meta = ovz_utils.read_instance_metadata(instance['id'])
+        migration_type = meta.get('migration_type')
+
+        live_migration = True
+        ext_str = ext_storage.OVZExtStorage(instance['id'])
+        if ext_str._volumes:
+            live_migration = False
+
+        if migration_type == 'resize_in_place':
+            # This is a resize on the same host so its simple, resize
+            # in place and then exit the method
+            if ovz_utils.remove_instance_metadata_key(instance['id'],
+                                                      'migration_type'):
+                LOG.debug(_('Removed migration_type metadata'))
+            else:
+                LOG.debug(_('Failed to remove migration_type metadata'))
+            return
+
+        try:
+            status = self.get_info(instance)['state']
+            LOG.debug(_('State in confirm_migration: %s') % status)
+            if status == power_state.RUNNING:
+                LOG.warn(
+                    _('Instance %s is running on source after migration') %
+                    instance['uuid'])
+                self._stop(instance)
+                status = self.get_info(instance)['state']
+
+            if status == power_state.SHUTDOWN:
+                LOG.debug(_('Cleaning up migration on source host'))
+                mobj = ovz_migration.OVZMigration(
+                    instance, ovz_utils.generate_network_dict(
+                        instance['id'], network_info), None, live_migration)
+                mobj.cleanup_source()
+                self._destroy(instance['id'])
+                self._clean_orphaned_files(instance['id'])
+            else:
+                LOG.warn(
+                    _('Check instance: %(instance_id)s, it may be broken. '
+                        'power_state: %(ps)s') %
+                    {'instance_id': instance['id'],
+                     'ps': status})
+        except exception.InstanceNotFound:
+            LOG.warn(
+                _('Instance %s not found, migration cleaned itself up?') %
+                instance['id'])
+        except exception.InstanceUnacceptable:
+            LOG.error(_('Failed to stop and destroy the instance'))
+        LOG.debug(_('Finished confirm migration for %s') % instance['id'])
+
+    def finish_revert_migration(self, instance, network_info,
+                                block_device_info=None):
+        """Finish reverting a resize, powering back on the instance."""
+        # Get the instance metadata to see what we need to do
+        LOG.debug(_('Beginning finish_revert_migration'))
+        meta = ovz_utils.read_instance_metadata(instance['id'])
+        migration_type = meta.get('migration_type')
+
+        if migration_type == 'resize_in_place':
+            # This is a resize on the same host so its simple, resize
+            # in place and then exit the method
+            LOG.debug(_('Reverting in-place migration for %s') %
+                      instance['id'])
+            self._set_instance_size(instance, network_info)
+            if ovz_utils.remove_instance_metadata_key(instance['id'],
+                                                      'migration_type'):
+                LOG.debug(_('Removed migration_type metadata'))
+                LOG.debug(_('Done reverting in-place migration for %s') %
+                          instance['id'])
+            else:
+                LOG.debug(_('Failed to remove migration_type metadata'))
+            return
+
+        if block_device_info:
+            LOG.debug(_('Instance %s has volumes') % instance['id'])
+            # the instance has external volumes and was not a live migration
+            # so we need to reattach external volumes
+            live_migration = False
+            LOG.debug(_('Starting instance %s, after revert') % instance['id'])
+            ext_str = ext_storage.OVZExtStorage(instance['id'])
+
+            for mountpoint, connection_info in ext_str.volumes():
+                self.attach_volume(connection_info, instance, mountpoint)
+
+            self._start(instance)
+        else:
+            LOG.debug(_('Instance %s has no volumes') % instance['id'])
+            live_migration = True
+            LOG.debug(_('Resuming live migration for %s') % instance['id'])
+            self.resume(instance, network_info)
+
+        mobj = ovz_migration.OVZMigration(
+            instance, ovz_utils.generate_network_dict(
+                instance['id'], network_info), None, live_migration)
+        mobj.cleanup_files()
+
+    def get_host_ip_addr(self):
+        """
+        Retrieves the IP address of the host
+        """
+        return CONF.my_ip
 
     # TODO(imsplitbit): finish the outstanding software contract with nova
     # All methods in the driver below this need to be worked out.
@@ -1885,13 +2256,6 @@ class OpenVzDriver(driver.ComputeDriver):
         """Return bandwidth usage info for each interface on each
            running VM"""
         return []
-
-    def get_host_ip_addr(self):
-        """
-        Retrieves the IP address of the dom0.
-        """
-        # TODO(Vek): Need to pass context in for access to auth_token
-        return
 
     def snapshot_instance(self, context, instance_id, image_id):
         return

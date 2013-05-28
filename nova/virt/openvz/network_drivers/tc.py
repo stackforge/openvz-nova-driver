@@ -115,7 +115,7 @@ class OVZTcRules(object):
             LOG.debug(_('TC id %s inflight already, pulling another') % tc_id)
             tc_id = self._pull_id()
             LOG.debug(_('TC id %s pulled, testing for dupe') % tc_id)
-        LOG.debug(_('TC id %s pulled, verified unique'))
+        LOG.debug(_('TC id %s pulled, verified unique') % tc_id)
         self._reserve_id(tc_id)
         return tc_id
 

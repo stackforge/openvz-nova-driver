@@ -25,6 +25,7 @@ from nova.conductor import api
 from nova import context
 from nova import exception
 from nova.openstack.common import log as logging
+from nova.openstack.common import processutils
 from nova import utils
 import os
 from oslo.config import cfg
@@ -57,7 +58,7 @@ def execute(*cmd, **kwargs):
             LOG.debug(_('Stderr from %(command)s: %(out)s') %
                       {'command': cmd[0], 'out': err})
         return out
-    except exception.ProcessExecutionError as err:
+    except processutils.ProcessExecutionError as err:
         msg = (_('Stderr from %(command)s: %(out)s') %
                {'command': cmd[0], 'out': err})
         if raise_on_error:
