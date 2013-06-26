@@ -1,3 +1,10 @@
+openvz-nova-driver (1.2-02) precise; urgency=low
+
+  * Added setting numtcpsock to instance sizing
+
+ -- Daniel Salinas <imsplitbit@gmail.com>  Wed, 26 June 2013 16:08:03 -0500
+
+
 openvz-nova-driver (1.1-02) precise; urgency=low
 
   * Released for known working distributions. (Closes: #XXXXXX)
