@@ -169,13 +169,20 @@ openvz_conn_opts = [
     cfg.IntOpt('ovz_rsync_iterations',
                default=1,
                help='Number of times to rsync a container when migrating'),
+    cfg.IntOpt('ovz_numtcpsock_default',
+               default=2000,
+               help='Default number of tcp sockets to give each container'),
     cfg.FloatOpt('ovz_disk_space_oversub_percent',
                  default=1.10,
                  help='Local disk over subscription percentage'),
     cfg.FloatOpt('ovz_cpulimit_overcommit_multiplier',
                  default=1.0,
                  help='Multiplier for cpulimit to facilitate over '
-                      'committing cpu resources')
+                      'committing cpu resources'),
+    cfg.DictOpt('ovz_numtcpsock_map',
+                default={"8192": 3000, "1024": 2000, "4096": 2000,
+                         "2048": 2000, "16384": 4000, "512": 2000},
+                help='Mapped values for flavors based on memory allocation'),
 ]
 
 CONF = cfg.CONF
@@ -812,6 +819,25 @@ class OpenVzDriver(driver.ComputeDriver):
         ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
                           '--numfile', max_file_descriptors,
                           run_as_root=True)
+
+    def _set_numtcpsock(self, instance, memory_mb):
+        """
+        Run the commnand:
+
+        vzctl set <ctid> --save --numtcpsock <number>
+
+        :param instance:
+        :return:
+        """
+        try:
+            tcp_sockets = CONF.ovz_numtcpsock_map[str(memory_mb)]
+        except (ValueError, TypeError, KeyError, cfg.NoSuchOptError):
+            LOG.error(_('There was no acceptable tcpsocket number found '
+                        'defaulting to %s') % CONF.ovz_numtcpsock_default)
+            tcp_sockets = CONF.ovz_numtcpsock_default
+
+        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+                          '--numtcpsock', tcp_sockets, run_as_root=True)
 
     def _set_instance_size(self, instance, network_info=None,
                            is_migration=False):
