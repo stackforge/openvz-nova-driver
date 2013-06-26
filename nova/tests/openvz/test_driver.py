@@ -16,6 +16,7 @@
 #    under the License.
 
 import base64
+import json
 import mox
 from nova.compute import manager
 from nova.compute import power_state
@@ -394,6 +395,36 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
         ovz_conn._set_numfiles(fakes.INSTANCE, max_fd)
+
+    def test_set_numtcpsock(self):
+        instance_meta = ovz_utils.format_system_metadata(
+            fakes.INSTANCE['system_metadata'])
+        numtcpsock = json.loads(
+            CONF.ovz_numtcpsock_map
+        )[str(instance_meta['instance_type_memory_mb'])]
+        self.mox.StubOutWithMock(openvz_conn.ovz_utils, 'execute')
+        openvz_conn.ovz_utils.execute(
+            'vzctl', 'set', fakes.INSTANCE['id'], '--save', '--numtcpsock',
+            numtcpsock, run_as_root=True).AndReturn(('', ''))
+        self.mox.ReplayAll()
+        ovz_conn = openvz_conn.OpenVzDriver(
+            manager.ComputeVirtAPI(None), False)
+        ovz_conn._set_numtcpsock(
+            fakes.INSTANCE, instance_meta['instance_type_memory_mb'])
+
+    def test_set_numtcpsock_no_flag(self):
+        instance_meta = ovz_utils.format_system_metadata(
+            fakes.INSTANCE['system_metadata'])
+        self.mox.StubOutWithMock(openvz_conn.ovz_utils, 'execute')
+        openvz_conn.ovz_utils.execute(
+            'vzctl', 'set', fakes.INSTANCE['id'], '--save', '--numtcpsock',
+            CONF.ovz_numtcpsock_default, run_as_root=True).AndReturn(('', ''))
+        self.mox.ReplayAll()
+        ovz_conn = openvz_conn.OpenVzDriver(
+            manager.ComputeVirtAPI(None), False)
+        ovz_conn._set_numtcpsock(
+            fakes.INSTANCE,
+            (instance_meta['instance_type_memory_mb'] + 1))
 
     def test_set_instance_size_with_instance_type_id(self):
         instance_memory_bytes = ((int(fakes.INSTANCETYPE['memory_mb'])
