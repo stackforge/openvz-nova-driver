@@ -2,84 +2,84 @@
 # This file should be owned by (and only-writeable by) the root user
 
 [Filters]
-# nova/virt/openvz/utils.py: 'mount', '-o', 'defaults' ...
+# ovznovadriver/openvz/utils.py: 'mount', '-o', 'defaults' ...
 mount: CommandFilter, /bin/mount, root
 
-# nova/virt/openvz/utils.py: 'umount'
+# ovznovadriver/openvz/utils.py: 'umount'
 umount: CommandFilter, /bin/umount, root
 
-# nova/virt/openvz/utils.py: 'mkdir', path
+# ovznovadriver/openvz/utils.py: 'mkdir', path
 mkdir: CommandFilter, /bin/mkdir, root
 
-# nova/virt/openvz/utils.py: 'chown', owner_uid, path
+# ovznovadriver/openvz/utils.py: 'chown', owner_uid, path
 chown: CommandFilter, /bin/chown, root
 
-# nova/virt/openvz/utils.py: 'chmod'
+# ovznovadriver/openvz/utils.py: 'chmod'
 chmod: CommandFilter, /bin/chmod, root
 
-# nova/virt/openvz/volume_drivers/iscsi.py: 'iscsiadm', '-m', ...
+# ovznovadriver/openvz/volume_drivers/iscsi.py: 'iscsiadm', '-m', ...
 iscsiadm: CommandFilter, iscsiadm, root
 
-# nova/virt/openvz/volume.py: fdisk %(dev_path)s
+# ovznovadriver/openvz/volume.py: fdisk %(dev_path)s
 fdisk: CommandFilter, /sbin/fdisk, root
 
-# nova/virt/openvz/driver.py: 'arping', '-U', floating_ip, '-A', '-I', ...
+# ovznovadriver/openvz/driver.py: 'arping', '-U', floating_ip, '-A', '-I', ...
 arping: CommandFilter, arping, root
 
-# nova/virt/openvz/file.py: 'touch', target
+# ovznovadriver/openvz/file.py: 'touch', target
 touch: CommandFilter, /usr/bin/touch, root
 
 # Rackspace Openvz starts here
 # nova/compute/manager.py: 'blockdev', '--getsize64', host_device
 blockdev: CommandFilter, /sbin/blockdev, root
 
-# nova/virt/openvz/driver.py: '/usr/sbin/vzlist'
+# ovznovadriver/openvz/driver.py: '/usr/sbin/vzlist'
 vzlist: CommandFilter, /usr/sbin/vzlist, root
 
-# nova/virt/openvz/driver.py: '/usr/sbin/vzctl'
+# ovznovadriver/openvz/driver.py: '/usr/sbin/vzctl'
 vzctl: CommandFilter, /usr/sbin/vzctl, root
 
-# nova/virt/openvz/driver.py: '/bin/rm'
+# ovznovadriver/openvz/driver.py: '/bin/rm'
 rm: CommandFilter, /bin/rm, root
 
-# nova/virt/openvz/driver.py:
+# ovznovadriver/openvz/driver.py:
 cpuinfo: ReadFileFilter, /proc/cpuinfo
 
-# nova/virt/openvz/driver.py:
+# ovznovadriver/openvz/driver.py:
 meminfo: ReadFileFilter, /proc/meminfo
 
-# nova/virt/openvz/driver.py: '/usr/sbin/vzcpucheck'
+# ovznovadriver/openvz/driver.py: '/usr/sbin/vzcpucheck'
 vzcpucheck: CommandFilter, /usr/sbin/vzcpucheck, root
 
-# nova/virt/openvz/driver.py: '/bin/rmdir'
+# ovznovadriver/openvz/driver.py: '/bin/rmdir'
 rmdir: CommandFilter, /bin/rmdir, root
 
-# nova/virt/openvz/volume_drivers/iscsi.py: '/usr/bin/iscsiadm'
+# ovznovadriver/openvz/volume_drivers/iscsi.py: '/usr/bin/iscsiadm'
 iscsiadm_usrsbin: CommandFilter, /usr/bin/iscsiadm, root
 
-# nova/virt/openvz/utils.py: '/sbin/blkid'
+# ovznovadriver/openvz/utils.py: '/sbin/blkid'
 blkid: CommandFilter, /sbin/blkid, root
 
-# nova/virt/openvz/network_plugins/tc.py
+# ovznovadriver/openvz/network_plugins/tc.py
 tc: CommandFilter, /sbin/tc, root
 
-# nova/virt/openvz/volume.py
+# ovznovadriver/openvz/volume.py
 ls: CommandFilter, /bin/ls, root
 
-# nova/virt/openvz/volume.py
+# ovznovadriver/openvz/volume.py
 sfdisk: CommandFilter, /sbin/sfdisk, root
 
-# nova/virt/openvz/volume.py
+# ovznovadriver/openvz/volume.py
 mknod: CommandFilter, /bin/mknod, root
 
-# nova/virt/openvz/driver.py
+# ovznovadriver/openvz/driver.py
 vzmigrate: CommandFilter, /usr/sbin/vzmigrate, root
 
-# nova/virt/openvz/migrate.py
+# ovznovadriver/openvz/migrate.py
 cp: CommandFilter, /bin/cp, root
 
-# nova/virt/openvz/utils.py
+# ovznovadriver/openvz/utils.py
 tar: CommandFilter, /bin/tar, root
 
-# nova/virt/openvz/migration_drivers/rsync.py
+# ovznovadriver/openvz/migration_drivers/rsync.py
 rsync: CommandFilter, /usr/bin/rsync, root
