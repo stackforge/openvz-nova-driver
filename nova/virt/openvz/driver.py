@@ -1392,7 +1392,7 @@ class OpenVzDriver(driver.ComputeDriver):
                     raise_on_error=False)
 
     def destroy(self, instance, network_info, block_device_info=None,
-                destroy_disks=True):
+                destroy_disks=True, context=None):
         """
         Destroy (shutdown and delete) the specified instance.
 
