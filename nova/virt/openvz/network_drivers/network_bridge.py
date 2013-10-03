@@ -22,6 +22,7 @@ is sketchy at best.
 
 from nova.network import linux_net
 from nova.openstack.common import log as logging
+from nova.openstack.common.gettextutils import _
 
 LOG = logging.getLogger('nova.virt.openvz.network_drivers.network_bridge')
 
@@ -31,27 +32,27 @@ class OVZNetworkBridgeDriver(object):
     VIF driver for a Linux Bridge
     """
 
-    def plug(self, instance, network, mapping):
+    def plug(self, instance, vif):
         """
         Ensure that the bridge exists and add a vif to it.
         """
-        if (not network.get('should_create_bridge') and
-                mapping.get('should_create_vlan')):
-            if mapping.get('should_create_vlan'):
+        if (not vif['network'].get_meta('should_create_bridge', False) and
+                vif['network'].get_meta('should_create_vlan', False)):
+            if vif['network'].get_meta('should_create_vlan', False):
                 LOG.debug(_('Ensuring bridge %(bridge)s and vlan %(vlan)s') %
-                          {'bridge': network['bridge'],
-                           'vlan': network['vlan']})
+                          {'bridge': vif['network']['bridge'],
+                           'vlan': vif['network'].get_meta('vlan')})
                 linux_net.LinuxBridgeInterfaceDriver.ensure_vlan_bridge(
-                    network['vlan'],
-                    network['bridge'],
-                    network['bridge_interface'])
+                    vif['network'].get_meta('vlan'),
+                    vif['network']['bridge'],
+                    vif['network'].get_meta('bridge_interface'))
             else:
-                LOG.debug(_('Ensuring bridge %s') % network['bridge'])
+                LOG.debug(_('Ensuring bridge %s') % vif['network']['bridge'])
                 linux_net.LinuxBridgeInterfaceDriver.ensure_bridge(
-                    network['bridge'],
-                    network['bridge_interface'])
+                    vif['network']['bridge'],
+                    vif['network'].get_meta('bridge_interface'))
 
-    def unplug(self, instance, network, mapping):
+    def unplug(self, instance, vif):
         """
         No manual unplugging required
         """

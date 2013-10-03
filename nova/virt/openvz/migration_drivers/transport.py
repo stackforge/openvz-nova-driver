@@ -20,6 +20,7 @@ Generic transport class for OVZ Migrations.  Common methods will be placed
 in this file for reuse.
 """
 from nova.openstack.common import log as logging
+from nova.openstack.common.gettextutils import _
 import os
 from oslo.config import cfg
 

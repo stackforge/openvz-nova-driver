@@ -23,6 +23,7 @@ is sketchy at best.
 from Cheetah import Template
 from nova import exception
 from nova.openstack.common import log as logging
+from nova.openstack.common.gettextutils import _
 from nova.virt.openvz import file as ovzfile
 from nova.virt.openvz.file_ext import boot as ovzboot
 from nova.virt.openvz.file_ext import shutdown as ovzshutdown

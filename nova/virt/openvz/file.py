@@ -22,6 +22,7 @@ is sketchy at best.
 
 from nova import exception
 from nova.openstack.common import log as logging
+from nova.openstack.common.gettextutils import _
 from nova.virt.openvz import utils as ovz_utils
 import os
 from oslo.config import cfg
