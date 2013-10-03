@@ -18,6 +18,7 @@
 import mox
 from nova import exception
 from nova import test
+from nova.tests import fake_network
 from nova.tests.openvz import fakes
 from nova.virt.openvz import driver as openvz_conn
 from nova.virt.openvz import network as openvz_net
@@ -25,6 +26,7 @@ from nova.virt.openvz.network_drivers import network_bridge
 from oslo.config import cfg
 
 CONF = cfg.CONF
+_fake_network_info = fake_network.fake_get_instance_nw_info
 
 
 class OpenVzNetworkTestCase(test.TestCase):
@@ -210,5 +212,9 @@ class OpenVzNetworkTestCase(test.TestCase):
         )
         self.mox.ReplayAll()
         driver = network_bridge.OVZNetworkBridgeDriver()
-        for network, mapping in fakes.NETWORKINFO:
-            driver.plug(fakes.INSTANCE, network, mapping)
+        network_info = _fake_network_info(self.stubs, 1)
+        for vif in network_info:
+            # should_create_vlan isn't included in nova's fake network info by
+            # default so we need to inject it to hit this code
+            vif['network']['meta']['should_create_vlan'] = True
+            driver.plug(fakes.INSTANCE, vif)

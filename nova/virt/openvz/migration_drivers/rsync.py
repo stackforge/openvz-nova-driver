@@ -19,6 +19,7 @@
 Driver for OVZ Migrations.  Uses rsync as a backend.
 """
 from nova.openstack.common import log as logging
+from nova.openstack.common.gettextutils import _
 from nova.virt.openvz.migration_drivers import transport
 from nova.virt.openvz import utils as ovz_utils
 import os

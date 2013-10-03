@@ -30,6 +30,7 @@ from nova.network import linux_net
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import loopingcall
+from nova.openstack.common.gettextutils import _
 from nova.virt import driver
 from nova.virt import images
 from nova.virt.openvz import file as ovzfile
@@ -209,12 +210,6 @@ class OpenVzDriver(driver.ComputeDriver):
         self.vif_driver = importutils.import_object(CONF.ovz_vif_driver)
         LOG.debug(_('__init__ complete in OpenVzDriver'))
 
-    def legacy_nwinfo(self):
-        """
-        Indicate if the driver requires the legacy network_info format.
-        """
-        return True
-
     def init_host(self, host=socket.gethostname()):
         """
         Initialize anything that is necessary for the driver to function,
@@ -369,8 +364,8 @@ class OpenVzDriver(driver.ComputeDriver):
         # TODO(imsplitbit): There's probably a better way to do this
         has_networking = False
         try:
-            for network, mapping in network_info:
-                if mapping['ips']:
+            for vif in network_info:
+                if vif.labeled_ips():
                     has_networking = True
         except ValueError:
             has_networking = False
@@ -611,28 +606,28 @@ class OpenVzDriver(driver.ComputeDriver):
         # TODO(imsplitbit): send id, iface, container mac, container ip and
         # gateway to _send_garp
         iface_counter = -1
-        for network in network_info:
+        for vif in network_info:
+            network = vif['network']
+            v4_subnets = []
+            for subnet in network['subnets']:
+                if subnet['version'] == 4:
+                    v4_subnets.append(subnet)
             iface_counter += 1
             vz_iface = "eth%d" % iface_counter
             LOG.debug(_('VZ interface: %s') % vz_iface)
-            bridge_info = network[0]
             LOG.debug(_('bridge interface: %s') %
-                      bridge_info['bridge_interface'])
-            LOG.debug(_('bridge: %s') % bridge_info['bridge'])
-            LOG.debug(_('address block: %s') % bridge_info['cidr'])
-            address_info = network[1]
-            LOG.debug(_('network label: %s') % address_info['label'])
-            for address in address_info['ips']:
-                LOG.debug(_('Address enabled: %s') % address['enabled'])
-                LOG.debug(_('Address enabled type: %s') %
-                          (type(address['enabled'])))
-                if address['enabled'] == u'1':
-                    LOG.debug(_('Address: %s') % address['ip'])
+                      network.get_meta('bridge_interface'))
+            LOG.debug(_('bridge: %s') % network['bridge'])
+            LOG.debug(_('address block: %s') % v4_subnets[0]['cidr'])
+            LOG.debug(_('network label: %s') % network['label'])
+            for v4_subnet in v4_subnets:
+                for ip in v4_subnet['ips']:
+                    LOG.debug(_('Address: %s') % ip['address'])
                     LOG.debug(
                         _('Running _send_garp(%(id)s %(ip)s %(vz_iface)s)') %
-                        {'id': instance['id'], 'ip': address['ip'],
+                        {'id': instance['id'], 'ip': ip['address'],
                          'vz_iface': vz_iface})
-                    self._send_garp(instance['id'], address['ip'], vz_iface)
+                    self._send_garp(instance['id'], ip['address'], vz_iface)
 
     def _send_garp(self, instance_id, ip_address, interface):
         """
@@ -1178,9 +1173,9 @@ class OpenVzDriver(driver.ComputeDriver):
         Plug vifs into networks and configure network devices in the
         container.  This is necessary to make multi-nic go.
         """
-        for (network, mapping) in network_info:
-            if mapping['ips']:
-                self.vif_driver.plug(instance, network, mapping)
+        for vif in network_info:
+            if vif.labeled_ips():
+                self.vif_driver.plug(instance, vif)
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
@@ -1454,9 +1449,9 @@ class OpenVzDriver(driver.ComputeDriver):
         running_delete.wait()
         LOG.debug(_('Timer finished'))
 
-        for (network, mapping) in network_info:
+        for vif in network_info:
             LOG.debug('Unplugging vifs')
-            self.vif_driver.unplug(instance, network, mapping)
+            self.vif_driver.unplug(instance, vif)
 
         self._clean_orphaned_files(instance['id'])
 

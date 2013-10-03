@@ -20,6 +20,7 @@ OpenVz doesn't have provision for a script to be run before a container
 is stopped but with the host node's context so we are implementing one here.
 """
 from nova.openstack.common import log as logging
+from nova.openstack.common.gettextutils import _
 from nova.virt.openvz import file as ovzfile
 import os
 from oslo.config import cfg

@@ -22,6 +22,7 @@ is sketchy at best.
 
 import json
 from nova.openstack.common import log as logging
+from nova.openstack.common.gettextutils import _
 from nova.virt.openvz import file as ovzfile
 import os
 from oslo.config import cfg

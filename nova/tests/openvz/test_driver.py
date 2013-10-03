@@ -23,6 +23,7 @@ from nova.compute import power_state
 from nova import exception
 from nova.openstack.common import processutils
 from nova import test
+from nova.tests import fake_network
 from nova.tests.openvz import fakes
 from nova.virt.openvz import driver as openvz_conn
 from nova.virt.openvz.file_ext import ext_storage
@@ -32,6 +33,7 @@ import os
 from oslo.config import cfg
 
 CONF = cfg.CONF
+_fake_network_info = fake_network.fake_get_instance_nw_info
 
 
 class OpenVzDriverTestCase(test.TestCase):
@@ -50,11 +52,8 @@ class OpenVzDriverTestCase(test.TestCase):
                                                        fakes.INSTANCE['id'])
         self.ext_str_filename = os.path.abspath(self.ext_str_filename)
         self.ext_str_permissions = 600
+        self.network_info = _fake_network_info(self.stubs, 1)
 
-    def test_legacy_nwinfo(self):
-        ovz_conn = openvz_conn.OpenVzDriver(
-            manager.ComputeVirtAPI(None), False)
-        self.assertTrue(ovz_conn.legacy_nwinfo())
 
     def test_start_success(self):
         # Testing happy path :-D
@@ -399,9 +398,9 @@ class OpenVzDriverTestCase(test.TestCase):
     def test_set_numtcpsock(self):
         instance_meta = ovz_utils.format_system_metadata(
             fakes.INSTANCE['system_metadata'])
-        numtcpsock = json.loads(
-            CONF.ovz_numtcpsock_map
-        )[str(instance_meta['instance_type_memory_mb'])]
+        numtcpsock_map = CONF.ovz_numtcpsock_map
+        flavor_memory = str(instance_meta['instance_type_memory_mb'])
+        numtcpsock = numtcpsock_map[flavor_memory]
         self.mox.StubOutWithMock(openvz_conn.ovz_utils, 'execute')
         openvz_conn.ovz_utils.execute(
             'vzctl', 'set', fakes.INSTANCE['id'], '--save', '--numtcpsock',
@@ -464,10 +463,10 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.StubOutWithMock(ovz_conn, '_set_diskspace')
         ovz_conn._set_diskspace(fakes.INSTANCE, fakes.INSTANCETYPE['root_gb'])
         self.mox.StubOutWithMock(ovz_conn, '_generate_tc_rules')
-        ovz_conn._generate_tc_rules(fakes.INSTANCE, fakes.NETWORKINFO, False)
+        ovz_conn._generate_tc_rules(fakes.INSTANCE, self.network_info, False)
         self.mox.ReplayAll()
         ovz_conn._set_instance_size(
-            fakes.INSTANCE, fakes.NETWORKINFO)
+            fakes.INSTANCE, self.network_info)
 
     def test_set_instance_size_without_instance_type_id(self):
         ovz_conn = openvz_conn.OpenVzDriver(
@@ -510,10 +509,10 @@ class OpenVzDriverTestCase(test.TestCase):
             ovz_utils.format_system_metadata(
                 fakes.INSTANCE['system_metadata'])['instance_type_root_gb'])
         self.mox.StubOutWithMock(ovz_conn, '_generate_tc_rules')
-        ovz_conn._generate_tc_rules(fakes.INSTANCE, fakes.NETWORKINFO, False)
+        ovz_conn._generate_tc_rules(fakes.INSTANCE, self.network_info, False)
         self.mox.ReplayAll()
         ovz_conn._set_instance_size(
-            fakes.INSTANCE, fakes.NETWORKINFO)
+            fakes.INSTANCE, self.network_info)
 
     def test_generate_tc_rules(self):
         self.mox.StubOutWithMock(openvz_conn.ovzboot, 'OVZBootFile')
@@ -536,7 +535,7 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
         self.mox.ReplayAll()
-        ovz_conn._generate_tc_rules(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn._generate_tc_rules(fakes.INSTANCE, self.network_info)
 
     def test_set_onboot_success(self):
         self.mox.StubOutWithMock(ovz_utils.utils, 'execute')
@@ -887,36 +886,40 @@ class OpenVzDriverTestCase(test.TestCase):
             fakes.INSTANCE['id'], mox.IgnoreArg(),
             mox.IgnoreArg()).MultipleTimes()
         self.mox.ReplayAll()
-        conn._gratuitous_arp_all_addresses(fakes.INSTANCE, fakes.NETWORKINFO)
+        conn._gratuitous_arp_all_addresses(fakes.INSTANCE, self.network_info)
 
     def test_send_garp_success(self):
         self.mox.StubOutWithMock(ovz_utils.utils, 'execute')
         ovz_utils.utils.execute(
             'vzctl', 'exec2', fakes.INSTANCE['id'], 'arping', '-q', '-c', '5',
-            '-A', '-I', fakes.NETWORKINFO[0][0]['bridge_interface'],
-            fakes.NETWORKINFO[0][1]['ips'][0]['ip'],
+            '-A', '-I', 
+            self.network_info[0]['network'].get_meta('bridge_interface'),
+            self.network_info[0]['network']['subnets'][0]['ips'][0]['address'],
             run_as_root=True).AndReturn(
                 ('', fakes.ERRORMSG))
         self.mox.ReplayAll()
         conn = openvz_conn.OpenVzDriver(manager.ComputeVirtAPI(None), False)
         conn._send_garp(
-            fakes.INSTANCE['id'], fakes.NETWORKINFO[0][1]['ips'][0]['ip'],
-            fakes.NETWORKINFO[0][0]['bridge_interface'])
+            fakes.INSTANCE['id'], 
+            self.network_info[0]['network']['subnets'][0]['ips'][0]['address'],
+            self.network_info[0]['network'].get_meta('bridge_interface'))
 
     def test_send_garp_faiure(self):
         self.mox.StubOutWithMock(ovz_utils.utils, 'execute')
         ovz_utils.utils.execute(
             'vzctl', 'exec2', fakes.INSTANCE['id'], 'arping', '-q', '-c', '5',
-            '-A', '-I', fakes.NETWORKINFO[0][0]['bridge_interface'],
-            fakes.NETWORKINFO[0][1]['ips'][0]['ip'],
+            '-A', '-I', 
+            self.network_info[0]['network'].get_meta('bridge_interface'),
+            self.network_info[0]['network']['subnets'][0]['ips'][0]['address'],
             run_as_root=True).AndRaise(
                 exception.InstanceUnacceptable(fakes.ERRORMSG))
         self.mox.ReplayAll()
         conn = openvz_conn.OpenVzDriver(manager.ComputeVirtAPI(None), False)
         self.assertRaises(
             exception.InstanceUnacceptable, conn._send_garp,
-            fakes.INSTANCE['id'], fakes.NETWORKINFO[0][1]['ips'][0]['ip'],
-            fakes.NETWORKINFO[0][0]['bridge_interface'])
+            fakes.INSTANCE['id'], 
+            self.network_info[0]['network']['subnets'][0]['ips'][0]['address'],
+            self.network_info[0]['network'].get_meta('bridge_interface'))
 
     def test_init_host_success(self):
         self.mox.StubOutWithMock(openvz_conn.ovzboot, 'OVZBootFile')
@@ -1071,7 +1074,7 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn.vif_driver.plug(
             fakes.INSTANCE, mox.IgnoreArg(), mox.IgnoreArg())
         self.mox.ReplayAll()
-        ovz_conn.plug_vifs(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn.plug_vifs(fakes.INSTANCE, self.network_info)
 
     def test_reboot_success(self):
         self.mox.StubOutWithMock(openvz_conn.ovzshutdown, 'OVZShutdownFile')
@@ -1097,7 +1100,7 @@ class OpenVzDriverTestCase(test.TestCase):
             fakes.INSTANCE).MultipleTimes().AndReturn(fakes.GOODSTATUS)
         self.mox.ReplayAll()
         timer = ovz_conn.reboot(
-            fakes.ADMINCONTEXT, fakes.INSTANCE, fakes.NETWORKINFO, None)
+            fakes.ADMINCONTEXT, fakes.INSTANCE, self.network_info, None)
         timer.wait()
 
     def test_reboot_fail_in_get_info(self):
@@ -1120,7 +1123,7 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn.get_info(fakes.INSTANCE).AndRaise(exception.NotFound)
         self.mox.ReplayAll()
         timer = ovz_conn.reboot(
-            fakes.ADMINCONTEXT, fakes.INSTANCE, fakes.NETWORKINFO, None)
+            fakes.ADMINCONTEXT, fakes.INSTANCE, self.network_info, None)
         self.assertRaises(exception.NotFound, timer.wait)
 
     def test_reboot_fail_because_not_found(self):
@@ -1143,7 +1146,7 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn.get_info(fakes.INSTANCE).AndReturn(fakes.NOSTATUS)
         self.mox.ReplayAll()
         timer = ovz_conn.reboot(
-            fakes.ADMINCONTEXT, fakes.INSTANCE, fakes.NETWORKINFO, None)
+            fakes.ADMINCONTEXT, fakes.INSTANCE, self.network_info, None)
         timer.wait()
 
     def test_reboot_failure(self):
@@ -1165,7 +1168,7 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.ReplayAll()
         self.assertRaises(
             exception.InstanceUnacceptable, ovz_conn.reboot,
-            fakes.ADMINCONTEXT, fakes.INSTANCE, fakes.NETWORKINFO, None)
+            fakes.ADMINCONTEXT, fakes.INSTANCE, self.network_info, None)
 
     def test_inject_files(self):
         ovz_conn = openvz_conn.OpenVzDriver(
@@ -1336,7 +1339,7 @@ class OpenVzDriverTestCase(test.TestCase):
             {'power_state': power_state.RUNNING})
 
         self.mox.ReplayAll()
-        conn.resume(fakes.INSTANCE, fakes.NETWORKINFO)
+        conn.resume(fakes.INSTANCE, self.network_info)
 
     def test_resume_db_not_found(self):
         self.mox.StubOutWithMock(ovz_utils.utils, 'execute')
@@ -1351,7 +1354,7 @@ class OpenVzDriverTestCase(test.TestCase):
             {'power_state': power_state.RUNNING}).AndRaise(
                 exception.InstanceNotFound(fakes.ERRORMSG))
         self.mox.ReplayAll()
-        conn.resume(fakes.INSTANCE, fakes.NETWORKINFO)
+        conn.resume(fakes.INSTANCE, self.network_info)
 
     def test_resume_failure(self):
         self.mox.StubOutWithMock(ovz_utils.utils, 'execute')
@@ -1397,7 +1400,7 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.ReplayAll()
         self.assertRaises(
             exception.InstanceTerminationFailure, ovz_conn.destroy,
-            fakes.INSTANCE, fakes.NETWORKINFO)
+            fakes.INSTANCE, self.network_info)
 
     def test_destroy_success(self):
         self.mox.StubOutWithMock(
@@ -1423,7 +1426,7 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.StubOutWithMock(ovz_conn, '_detach_volumes')
         ovz_conn._detach_volumes(fakes.INSTANCE, fakes.BDM)
         self.mox.ReplayAll()
-        ovz_conn.destroy(fakes.INSTANCE, fakes.NETWORKINFO, fakes.BDM)
+        ovz_conn.destroy(fakes.INSTANCE, self.network_info, fakes.BDM)
 
     def test_get_info_running_state(self):
         ovz_conn = openvz_conn.OpenVzDriver(
@@ -1508,6 +1511,9 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
         ovz_conn.utility['MEMORY_MB'] = 16384
+        # get_memory_mb_total just returns 1 if you're not on linux
+        self.mox.StubOutWithMock(ovz_utils, 'get_memory_mb_total')
+        ovz_utils.get_memory_mb_total().AndReturn(16384)
         self.mox.ReplayAll()
         self.assertTrue(
             ovz_conn._percent_of_resource(fakes.INSTANCE['memory_mb']) < 1)
@@ -1540,13 +1546,13 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.StubOutWithMock(ovz_conn, '_set_description')
         ovz_conn._set_description(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_setup_networking')
-        ovz_conn._setup_networking(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn._setup_networking(fakes.INSTANCE, self.network_info)
         self.mox.StubOutWithMock(ovz_conn, '_set_onboot')
         ovz_conn._set_onboot(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_set_name')
         ovz_conn._set_name(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, 'plug_vifs')
-        ovz_conn.plug_vifs(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn.plug_vifs(fakes.INSTANCE, self.network_info)
         self.mox.StubOutWithMock(ovz_conn, '_set_hostname')
         ovz_conn._set_hostname(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_set_instance_size')
@@ -1559,7 +1565,7 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn._start(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_gratuitous_arp_all_addresses')
         ovz_conn._gratuitous_arp_all_addresses(
-            fakes.INSTANCE, fakes.NETWORKINFO)
+            fakes.INSTANCE, self.network_info)
         self.mox.StubOutWithMock(ovz_conn, 'set_admin_password')
         ovz_conn.set_admin_password(
             fakes.ADMINCONTEXT, fakes.INSTANCE['id'],
@@ -1569,7 +1575,7 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.ReplayAll()
         timer = ovz_conn.spawn(
             fakes.ADMINCONTEXT, fakes.INSTANCE, None, fakes.FILESTOINJECT,
-            fakes.ROOTPASS, fakes.NETWORKINFO, fakes.BDM)
+            fakes.ROOTPASS, self.network_info, fakes.BDM)
         timer.wait()
 
     def test_spawn_failure(self):
@@ -1591,13 +1597,13 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.StubOutWithMock(ovz_conn, '_set_description')
         ovz_conn._set_description(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_setup_networking')
-        ovz_conn._setup_networking(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn._setup_networking(fakes.INSTANCE, self.network_info)
         self.mox.StubOutWithMock(ovz_conn, '_set_onboot')
         ovz_conn._set_onboot(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_set_name')
         ovz_conn._set_name(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, 'plug_vifs')
-        ovz_conn.plug_vifs(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn.plug_vifs(fakes.INSTANCE, self.network_info)
         self.mox.StubOutWithMock(ovz_conn, '_set_hostname')
         ovz_conn._set_hostname(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_set_instance_size')
@@ -1610,7 +1616,7 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn._start(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_gratuitous_arp_all_addresses')
         ovz_conn._gratuitous_arp_all_addresses(
-            fakes.INSTANCE, fakes.NETWORKINFO)
+            fakes.INSTANCE, self.network_info)
         self.mox.StubOutWithMock(ovz_conn, 'set_admin_password')
         ovz_conn.set_admin_password(
             fakes.ADMINCONTEXT, fakes.INSTANCE['id'],
@@ -1620,7 +1626,7 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.ReplayAll()
         timer = ovz_conn.spawn(
             fakes.ADMINCONTEXT, fakes.INSTANCE, None, fakes.FILESTOINJECT,
-            fakes.ROOTPASS, fakes.NETWORKINFO, fakes.BDM)
+            fakes.ROOTPASS, self.network_info, fakes.BDM)
         timer.wait()
 
     def test_snapshot(self):
@@ -1634,13 +1640,13 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
         ovz_conn.rescue(
-            fakes.ADMINCONTEXT, fakes.INSTANCE, fakes.NETWORKINFO,
+            fakes.ADMINCONTEXT, fakes.INSTANCE, self.network_info,
             fakes.INSTANCE['image_ref'], fakes.ROOTPASS)
 
     def test_unrescue(self):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
-        ovz_conn.unrescue(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn.unrescue(fakes.INSTANCE, self.network_info)
 
     def test_get_diagnostics(self):
         ovz_conn = openvz_conn.OpenVzDriver(
@@ -1766,12 +1772,12 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
         result = ovz_conn.ensure_filtering_rules_for_instance(
-            fakes.INSTANCE, fakes.NETWORKINFO)
+            fakes.INSTANCE, self.network_info)
 
     def test_unfilter_instance(self):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
-        result = ovz_conn.unfilter_instance(fakes.INSTANCE, fakes.NETWORKINFO)
+        result = ovz_conn.unfilter_instance(fakes.INSTANCE, self.network_info)
 
     def test_refresh_provider_fw_rules(self):
         ovz_conn = openvz_conn.OpenVzDriver(
@@ -1820,14 +1826,14 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.StubOutWithMock(ovz_conn, '_pymigration_send_to_host')
         ovz_conn._pymigration_send_to_host(
             fakes.INSTANCE, ovz_utils.generate_network_dict(
-                fakes.INSTANCE['id'], fakes.NETWORKINFO),
+                fakes.INSTANCE['id'], self.network_info),
             fakes.BDM, fakes.DESTINATION, False)
         self.mox.StubOutWithMock(ovz_conn, '_detach_volumes')
         ovz_conn._detach_volumes(fakes.INSTANCE, fakes.BDM, True, False)
         self.mox.ReplayAll()
         ovz_conn.migrate_disk_and_power_off(
             fakes.ADMINCONTEXT, fakes.INSTANCE, fakes.DESTINATION,
-            fakes.INSTANCETYPE, fakes.NETWORKINFO, fakes.BDM)
+            fakes.INSTANCETYPE, self.network_info, fakes.BDM)
 
     def test_migrate_disk_and_power_off_success_without_storage(self):
         INSTANCE = fakes.INSTANCE.copy()
@@ -1839,12 +1845,12 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.StubOutWithMock(ovz_conn, '_pymigration_send_to_host')
         ovz_conn._pymigration_send_to_host(
             INSTANCE, ovz_utils.generate_network_dict(
-                INSTANCE['id'], fakes.NETWORKINFO),
+                INSTANCE['id'], self.network_info),
             None, fakes.DESTINATION, True)
         self.mox.ReplayAll()
         ovz_conn.migrate_disk_and_power_off(
             fakes.ADMINCONTEXT, INSTANCE, fakes.DESTINATION,
-            fakes.INSTANCETYPE, fakes.NETWORKINFO)
+            fakes.INSTANCETYPE, self.network_info)
 
     def test_migrate_disk_and_power_off_no_dest(self):
         ovz_conn = openvz_conn.OpenVzDriver(
@@ -1852,7 +1858,7 @@ class OpenVzDriverTestCase(test.TestCase):
         self.assertRaises(
             exception.MigrationError, ovz_conn.migrate_disk_and_power_off,
             fakes.ADMINCONTEXT, fakes.INSTANCE, None, fakes.INSTANCETYPE,
-            fakes.NETWORKINFO)
+            self.network_info)
 
     def test_migrate_disk_and_power_off_same_host(self):
         ovz_conn = openvz_conn.OpenVzDriver(
@@ -1863,7 +1869,7 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.ReplayAll()
         ovz_conn.migrate_disk_and_power_off(
             fakes.ADMINCONTEXT, fakes.INSTANCE, CONF.host,
-            fakes.INSTANCETYPE, fakes.NETWORKINFO)
+            fakes.INSTANCETYPE, self.network_info)
 
     def test_pymigration_send_to_host(self):
         self.mox.StubOutWithMock(
@@ -1875,7 +1881,7 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
         ovz_conn._pymigration_send_to_host(
-            fakes.INSTANCE, fakes.NETWORKINFO, fakes.BDM,
+            fakes.INSTANCE, self.network_info, fakes.BDM,
             fakes.DESTINATION, False)
 
     def test_vzmigration_send_to_host(self):
@@ -1895,10 +1901,10 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
         self.mox.StubOutWithMock(ovz_conn, '_set_instance_size')
-        ovz_conn._set_instance_size(fakes.INSTANCE, fakes.NETWORKINFO, False)
+        ovz_conn._set_instance_size(fakes.INSTANCE, self.network_info, False)
         self.mox.ReplayAll()
         ovz_conn.finish_migration(
-            fakes.ADMINCONTEXT, None, fakes.INSTANCE, None, fakes.NETWORKINFO,
+            fakes.ADMINCONTEXT, None, fakes.INSTANCE, None, self.network_info,
             None, None, fakes.BDM)
 
     def test_finish_migration_no_resize(self):
@@ -1910,18 +1916,18 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn._attach_volumes(fakes.INSTANCE, fakes.BDM)
         self.mox.StubOutWithMock(ovz_conn, '_pymigrate_finish_migration')
         ovz_conn._pymigrate_finish_migration(
-            fakes.INSTANCE, fakes.NETWORKINFO, False)
+            fakes.INSTANCE, self.network_info, False)
         self.mox.StubOutWithMock(ovz_conn, '_set_name')
         ovz_conn._set_name(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_set_description')
         ovz_conn._set_description(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_generate_tc_rules')
-        ovz_conn._generate_tc_rules(fakes.INSTANCE, fakes.NETWORKINFO, True)
+        ovz_conn._generate_tc_rules(fakes.INSTANCE, self.network_info, True)
         self.mox.StubOutWithMock(ovz_conn, '_start')
         ovz_conn._start(fakes.INSTANCE)
         self.mox.ReplayAll()
         ovz_conn.finish_migration(
-            fakes.ADMINCONTEXT, None, fakes.INSTANCE, None, fakes.NETWORKINFO,
+            fakes.ADMINCONTEXT, None, fakes.INSTANCE, None, self.network_info,
             None, False, fakes.BDM)
 
     def test_finish_migration_resize(self):
@@ -1933,18 +1939,18 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn._attach_volumes(fakes.INSTANCE, fakes.BDM)
         self.mox.StubOutWithMock(ovz_conn, '_pymigrate_finish_migration')
         ovz_conn._pymigrate_finish_migration(
-            fakes.INSTANCE, fakes.NETWORKINFO, False)
+            fakes.INSTANCE, self.network_info, False)
         self.mox.StubOutWithMock(ovz_conn, '_set_name')
         ovz_conn._set_name(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_set_instance_size')
-        ovz_conn._set_instance_size(fakes.INSTANCE, fakes.NETWORKINFO, True)
+        ovz_conn._set_instance_size(fakes.INSTANCE, self.network_info, True)
         self.mox.StubOutWithMock(ovz_conn, '_set_description')
         ovz_conn._set_description(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, '_start')
         ovz_conn._start(fakes.INSTANCE)
         self.mox.ReplayAll()
         ovz_conn.finish_migration(
-            fakes.ADMINCONTEXT, None, fakes.INSTANCE, None, fakes.NETWORKINFO,
+            fakes.ADMINCONTEXT, None, fakes.INSTANCE, None, self.network_info,
             None, True, fakes.BDM)
 
     def test_pymigrate_finish_migration(self):
@@ -1956,7 +1962,7 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
         ovz_conn._pymigrate_finish_migration(
-            fakes.INSTANCE, fakes.NETWORKINFO, False)
+            fakes.INSTANCE, self.network_info, False)
 
     def test_vzmigrate_setup_dest_host(self):
         ovz_conn = openvz_conn.OpenVzDriver(
@@ -1964,11 +1970,11 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.StubOutWithMock(ovz_conn, '_stop')
         ovz_conn._stop(fakes.INSTANCE)
         self.mox.StubOutWithMock(ovz_conn, 'plug_vifs')
-        ovz_conn.plug_vifs(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn.plug_vifs(fakes.INSTANCE, self.network_info)
         self.mox.StubOutWithMock(ovz_conn, '_start')
         ovz_conn._start(fakes.INSTANCE)
         self.mox.ReplayAll()
-        ovz_conn._vzmigrate_setup_dest_host(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn._vzmigrate_setup_dest_host(fakes.INSTANCE, self.network_info)
 
     def test_confirm_migration_resize_in_place(self):
         self.mox.StubOutWithMock(ovz_utils, 'read_instance_metadata')
@@ -1983,7 +1989,7 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.ReplayAll()
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
-        ovz_conn.confirm_migration(None, fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn.confirm_migration(None, fakes.INSTANCE, self.network_info)
 
     def test_confirm_migration(self):
         self.mox.StubOutWithMock(migration.OVZMigration, 'cleanup_source')
@@ -2002,7 +2008,7 @@ class OpenVzDriverTestCase(test.TestCase):
         self.mox.StubOutWithMock(ovz_conn, '_clean_orphaned_files')
         ovz_conn._clean_orphaned_files(fakes.INSTANCE['id'])
         self.mox.ReplayAll()
-        ovz_conn.confirm_migration(None, fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn.confirm_migration(None, fakes.INSTANCE, self.network_info)
 
     def test_finish_revert_migration(self):
         self.mox.StubOutWithMock(ovz_utils, 'read_instance_metadata')
@@ -2012,7 +2018,7 @@ class OpenVzDriverTestCase(test.TestCase):
         ovz_conn = openvz_conn.OpenVzDriver(
             manager.ComputeVirtAPI(None), False)
         self.mox.StubOutWithMock(ovz_conn, 'resume')
-        ovz_conn.resume(fakes.INSTANCE, fakes.NETWORKINFO)
+        ovz_conn.resume(fakes.INSTANCE, self.network_info)
         self.mox.ReplayAll()
         ovz_conn.finish_revert_migration(
-            fakes.INSTANCE, fakes.NETWORKINFO, None)
+            fakes.INSTANCE, self.network_info, None)

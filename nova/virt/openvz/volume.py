@@ -24,6 +24,7 @@ import glob
 from nova import exception
 from nova.openstack.common import log as logging
 from nova.openstack.common import processutils
+from nova.openstack.common.gettextutils import _
 from nova.virt.openvz import file as ovzfile
 from nova.virt.openvz import utils as ovz_utils
 import os
