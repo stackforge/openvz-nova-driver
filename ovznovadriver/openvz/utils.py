@@ -521,30 +521,37 @@ def remove_instance_metadata(instance_id):
 def generate_network_dict(instance_id, network_info):
     interfaces = list()
     interface_num = -1
-    for (network, mapping) in network_info:
-        if mapping['ips']:
+    for vif in network_info:
+        if vif.labeled_ips():
             interface_num += 1
-
+            v6_subnets = []
+            v4_subnets = []
+            for subnet in vif['network']['subnets']:
+                if subnet['version'] == 4:
+                    v4_subnets.append(subnet)
+                elif subnet['version'] == 6:
+                    v6_subnets.append(subnet)
             #TODO(imsplitbit): make this work for ipv6
             address_v6 = None
             gateway_v6 = None
             netmask_v6 = None
             if CONF.use_ipv6:
-                address_v6 = mapping['ip6s'][0]['ip']
-                netmask_v6 = mapping['ip6s'][0]['netmask']
-                gateway_v6 = mapping['gateway6']
+                if v6_subnets:
+                    address_v6 = v6_subnets[0]['ips'][0]['address']
+                    netmask_v6 = v6_subnets[0].as_netaddr()._prefixlen
+                    gateway_v6 = v6_subnets[0]['gateway']
 
             interface_info = {
                 'id': instance_id,
                 'interface_number': interface_num,
-                'bridge': network['bridge'],
+                'bridge': vif['network']['bridge'],
                 'name': 'eth%d' % interface_num,
-                'mac': mapping['mac'],
-                'address': mapping['ips'][0]['ip'],
-                'netmask': mapping['ips'][0]['netmask'],
-                'gateway': mapping['gateway'],
-                'broadcast': mapping['broadcast'],
-                'dns': ' '.join(mapping['dns']),
+                'mac': vif['address'],
+                'address': v4_subnets[0]['ips'][0]['address'],
+                'netmask': v4_subnets[0].as_netaddr().netmask,
+                'gateway': v4_subnets[0]['gateway'],
+                'broadcast': v4_subnets[0].as_netaddr().broadcast,
+                'dns': ' '.join([ip['address'] for ip in v4_subnets[0]['dns']]),
                 'address_v6': address_v6,
                 'gateway_v6': gateway_v6,
                 'netmask_v6': netmask_v6

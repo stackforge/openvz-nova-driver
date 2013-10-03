@@ -34,6 +34,8 @@ class OVZMigration(object):
     def __init__(self, instance, interfaces, block_device_info=None,
                  dest=None, live=False):
         self.instance = instance
+        # TODO(pdmars): does interfaces need to be in the legacy
+        # network_info format? because it's not anymore
         self.interfaces = interfaces
         self.block_device_info = block_device_info
         self.destination_host = dest
