@@ -1256,7 +1256,7 @@ class OpenVzDriver(driver.ComputeDriver):
             {'instance_id': instance['id'],
              'files_to_inject': files_to_inject})
         for file_to_inject in files_to_inject:
-            LOG.debug(_('Injecting file: %s') % files_to_inject[0])
+            LOG.debug(_('Injecting file: %s') % file_to_inject[0])
             self.inject_file(instance,
                              base64.b64encode(file_to_inject[0]),
                              base64.b64encode(file_to_inject[1]))
