@@ -20,9 +20,9 @@ A driver specific to OpenVz as the support for Ovz in libvirt
 is sketchy at best.
 """
 
-from Cheetah import Template
 from nova import exception
 from nova.openstack.common import log as logging
+from nova.virt import netutils
 from ovznovadriver.localization import _
 from ovznovadriver.openvz import file as ovzfile
 from ovznovadriver.openvz.file_ext import boot as ovzboot
@@ -41,11 +41,12 @@ class OVZNetworkInterfaces(object):
     Helper class for managing interfaces in OpenVz
     """
     #TODO(imsplitbit): fix this to work with redhat based distros
-    def __init__(self, interface_info):
+    def __init__(self, interface_info, network_info=None):
         """
         Manage the network interfaces for your OpenVz containers.
         """
         self.interface_info = interface_info
+        self.network_info = network_info
         LOG.debug(_('Interface info: %s') % self.interface_info)
         self.boot_file = ovzboot.OVZBootFile(self.interface_info[0]['id'], 755)
         with self.boot_file:
@@ -72,7 +73,6 @@ class OVZNetworkInterfaces(object):
                 with self.shutdown_file:
                     self.shutdown_file.append(tc_rules.container_stop())
 
-            self._load_template()
             self._fill_templates()
         else:
             for net_dev in self.interface_info:
@@ -87,31 +87,19 @@ class OVZNetworkInterfaces(object):
         self._set_nameserver(self.interface_info[0]['id'],
                              self.interface_info[0]['dns'])
 
-    def _load_template(self):
-        """
-        Load templates needed for network interfaces.
-        """
-        if CONF.ovz_use_veth_devs:
-            # TODO(imsplitbit): make a cheatah template for dhcp networking
-            self.template = open(CONF.injected_network_template).read()
-        else:
-            self.template = None
-
     def _fill_templates(self):
         """
         Iterate through each file necessary for creating interfaces on a
         given platform, open the file and write the contents of the template
         to the file.
         """
+        iface_file = netutils.get_injected_network_template(self.network_info,
+                        use_ipv6=CONF.use_ipv6,
+                        template=CONF.injected_network_template)
         for filename in self._filename_factory():
             network_file = OVZNetworkFile(filename)
-            self.iface_file = str(
-                Template.Template(self.template,
-                                  searchList=[
-                                      {'interfaces': self.interface_info,
-                                       'use_ipv6': CONF.use_ipv6}]))
             with network_file:
-                network_file.append(self.iface_file.split('\n'))
+                network_file.append(iface_file)
                 network_file.write()
 
     def _filename_factory(self, variant='debian'):

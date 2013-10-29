@@ -1165,7 +1165,7 @@ class OpenVzDriver(driver.ComputeDriver):
         LOG.debug(_('network_info: %s') % network_info)
         interfaces = ovz_utils.generate_network_dict(instance['id'],
                                                      network_info)
-        ifaces_fh = ovznetwork.OVZNetworkInterfaces(interfaces)
+        ifaces_fh = ovznetwork.OVZNetworkInterfaces(interfaces, network_info)
         ifaces_fh.add()
 
     def plug_vifs(self, instance, network_info):
