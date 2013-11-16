@@ -83,7 +83,8 @@ openvz_conn_opts = [
                default='eth0',
                help='Device to use as the root device for tc rules'),
     cfg.StrOpt('ovz_tc_template_dir',
-               default='$pybasedir/../openvz-nova-driver/ovznovadriver/openvz/network_drivers/templates',
+               default='$pybasedir/../openvz-nova-driver/'
+                       'ovznovadriver/openvz/network_drivers/templates',
                help='Where the tc templates are located'),
     cfg.StrOpt('ovz_tmp_dir',
                default='/var/tmp',
@@ -1386,8 +1387,8 @@ class OpenVzDriver(driver.ComputeDriver):
                     'rm', '-f', filename, run_as_root=True,
                     raise_on_error=False)
 
-    def destroy(self, instance, network_info, block_device_info=None,
-                destroy_disks=True, context=None):
+    def destroy(self, context, instance, network_info, block_device_info=None,
+                destroy_disks=True):
         """
         Destroy (shutdown and delete) the specified instance.
 
