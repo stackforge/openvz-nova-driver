@@ -21,6 +21,7 @@ is sketchy at best.
 """
 
 import glob
+from nova import block_device
 from nova import exception
 from nova.openstack.common import log as logging
 from nova.openstack.common import processutils
@@ -60,7 +61,7 @@ class OVZVolume(object):
         # devices and externally mounted filesystems at the same time.
         # Currently it does not.
         self.instance_id = instance_id
-        self.mountpoint = mountpoint
+        self.mountpoint = block_device.prepend_dev(mountpoint)
         self.device = dev
 
     def attach(self):
