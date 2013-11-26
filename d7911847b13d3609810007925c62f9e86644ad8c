@@ -1,0 +1,9 @@
+Verified+2: Jenkins
+Approved+1: Daniel Salinas <imsplitbit@gmail.com>
+Code-Review+2: Daniel Salinas <imsplitbit@gmail.com>
+Code-Review+1: Joe Cruz <jcruz7@gmail.com>
+Submitted-by: Jenkins
+Submitted-at: Tue, 26 Nov 2013 14:29:40 +0000
+Reviewed-on: https://review.openstack.org/57935
+Project: stackforge/openvz-nova-driver
+Branch: refs/heads/master
