@@ -1720,11 +1720,11 @@ class OpenVzDriver(driver.ComputeDriver):
             raise exception.MigrationError(
                 _('Migration destination is: %s') % dest)
 
-        if dest == CONF.host:
+        if dest == CONF.my_ip:
             # if this is an inplace resize we don't need to do any of this
             LOG.debug(_('This is an inplace migration'))
-            ovz_utils.save_instance_metadata(instance['id'], 'migration_type',
-                                             'resize_in_place')
+            instance.system_metadata['migration_type'] = 'resize_in_place'
+            instance.save()
             return
 
         # Validate the ovz_migration_method flag
@@ -1797,7 +1797,7 @@ class OpenVzDriver(driver.ComputeDriver):
 
     def finish_migration(self, context, migration, instance, disk_info,
                          network_info, image_meta, resize_instance,
-                         block_device_info=None):
+                         block_device_info=None, power_on=True):
         """Completes a resize, turning on the migrated instance
 
         :param network_info:
@@ -1954,7 +1954,7 @@ class OpenVzDriver(driver.ComputeDriver):
         LOG.debug(_('Finished confirm migration for %s') % instance['id'])
 
     def finish_revert_migration(self, instance, network_info,
-                                block_device_info=None):
+                                block_device_info=None, power_on=True):
         """Finish reverting a resize, powering back on the instance."""
         # Get the instance metadata to see what we need to do
         LOG.debug(_('Beginning finish_revert_migration'))

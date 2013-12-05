@@ -394,8 +394,10 @@ def format_system_metadata(metadata):
     :param metadata: instance['system_metadata']
     :return: dict
     """
+    if isinstance(metadata, dict):
+        return metadata
     fmt_meta = dict()
-    if metadata:
+    if isinstance(metadata, list):
         for item in metadata:
             meta_item = dict()
             for key, value in item.iteritems():
