@@ -90,10 +90,12 @@ class OVZISCSIStorageDriver(ovzvolume.OVZVolume):
         if not self.iscsi_properties['target_discovered']:
             self._run_iscsiadm(('--op', 'new'))
 
-    def session_currently_connected(self):
+    def session_currently_connected(self, **kwargs):
+        check_exit_code = kwargs.pop('check_exit_code', [0])
         out = ovz_utils.execute(
             'iscsiadm', '-m', 'session', run_as_root=True,
-            raise_on_error=False)
+            raise_on_error=False,
+            check_exit_code=check_exit_code)
         if out:
             for line in out.splitlines():
                 if self.iscsi_properties['target_iqn'] in line:
@@ -117,7 +119,7 @@ class OVZISCSIStorageDriver(ovzvolume.OVZVolume):
         self.set_iscsi_auth()
 
         try:
-            if not self.session_currently_connected():
+            if not self.session_currently_connected(check_exit_code=[0, 21]):
                 LOG.debug(_('iSCSI session for %s not connected, '
                             'connecting now') %
                           self.iscsi_properties['target_iqn'])
