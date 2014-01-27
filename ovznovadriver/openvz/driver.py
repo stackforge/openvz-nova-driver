@@ -1400,6 +1400,24 @@ class OpenVzDriver(driver.ComputeDriver):
         because a failure to destroy would leave the database and container
         in a disparate state.
         """
+        # If a revert_resize is called in the compute manager we hit a case
+        # where an in-flight resize on the same host deletes the instance from
+        # disk.  Before any delete operations are allowed first check to be
+        # sure that there is not currently a resize happening.
+        #
+        # NOTE(imsplitbit): There is an edge case here where an in-flight
+        # resize is taking place and a user issues a destroy via the api
+        # and this will result in a bad state.  We need a better solution to
+        # allow in place resizes.
+        meta = ovz_utils.read_instance_metadata(instance['id'])
+        migration_type = meta.get('migration_type')
+
+        if migration_type == 'resize_in_place':
+            # This is a resize on the same host.  The compute manager calls
+            # destroy on the source before calling revert_resize on the driver.
+            # Since there is an in-flight resize we'll exit here.
+            return
+
         # cleanup the instance metadata since this is application specific
         # it's safe to just delete all of it because if it's there we put
         # it there.
