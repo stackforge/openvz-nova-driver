@@ -1971,7 +1971,7 @@ class OpenVzDriver(driver.ComputeDriver):
             LOG.error(_('Failed to stop and destroy the instance'))
         LOG.debug(_('Finished confirm migration for %s') % instance['id'])
 
-    def finish_revert_migration(self, instance, network_info,
+    def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
         """Finish reverting a resize, powering back on the instance."""
         # Get the instance metadata to see what we need to do
@@ -2195,7 +2195,7 @@ class OpenVzDriver(driver.ComputeDriver):
         """Power off the specified instance."""
         return
 
-    def power_on(self, instance):
+    def power_on(self, context, instance, network_info, block_device_info):
         """Power on the specified instance."""
         return
 
