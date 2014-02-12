@@ -251,30 +251,6 @@ def get_memory_mb_total():
     return int(meminfo[idx + 1]) / 1024
 
 
-def get_memory_mb_used(instance_id=None, block_size=4096):
-    """
-    Get the free memory size(MB) of physical computer.
-
-    :returns: the total committed of memory(MB).
-
-    """
-
-    if instance_id:
-        cmd = "vzlist -H -o ctid,privvmpages.l %s" % instance_id
-    else:
-        cmd = "vzlist --all -H -o ctid,privvmpages.l"
-
-    cmd = cmd.split()
-    total_used_mb = 0
-    out = execute(*cmd, run_as_root=True, raise_on_error=False)
-    if out:
-        for line in out.splitlines():
-            line = line.split()
-            total_used_mb += ((int(line[1]) * block_size) / 1024 ** 2)
-
-    return total_used_mb
-
-
 def get_local_gb(path):
     """
     Get the total hard drive space at <path>
@@ -469,15 +445,12 @@ def read_all_instance_metadata():
 
     :returns dict():
     """
+    from ovznovadriver.openvz.container import OvzContainers
     instances_metadata = {}
-    out = execute(
-        'vzlist', '-H', '-o', 'ctid', '--all', raise_on_error=False,
-        run_as_root=True)
-    if out:
-        for line in out.splitlines():
-            instance_id = line.strip()
-            instances_metadata[instance_id] = read_instance_metadata(
-                instance_id)
+    containers = OvzContainers.list()
+    for container in containers:
+        instances_metadata[container.nova_id] = read_instance_metadata(
+            container.nova_id)
 
     return instances_metadata
 
@@ -497,15 +470,17 @@ def remove_instance_metadata_key(instance_id, key):
         sysmeta.pop(key)
         conductor.instance_update(
             admin_context, instance['uuid'], system_metadata=sysmeta)
+        return True
     else:
         LOG.debug(_('Key %s does not exist in system_metadata') % key)
+        return False
 
 
 def remove_instance_metadata(instance_id):
     """
     Clean up instance metadata for an instance
     """
-    openvz_metadata_keys = ('tc_id',)
+    openvz_metadata_keys = ('tc_id','migration_type')
     try:
         for key in openvz_metadata_keys:
             LOG.debug(_('Removing metadata key: %s') % key)
@@ -520,7 +495,7 @@ def remove_instance_metadata(instance_id):
         return False
 
 
-def generate_network_dict(instance_id, network_info):
+def generate_network_dict(container, network_info):
     interfaces = list()
     interface_num = -1
     for vif in network_info:
@@ -544,7 +519,7 @@ def generate_network_dict(instance_id, network_info):
                     gateway_v6 = v6_subnets[0]['gateway']
 
             interface_info = {
-                'id': instance_id,
+                'id': container.ovz_id,
                 'interface_number': interface_num,
                 'bridge': vif['network']['bridge'],
                 'name': 'eth%d' % interface_num,
@@ -592,7 +567,7 @@ def copy(src, dest):
         return False
 
 
-def tar(source, target_file, working_dir=None, skip_list=[]):
+def tar(source, target_file, working_dir=None, skip_list=None, extra=None):
     """
     wrapper for tar for making backup archives
     """
@@ -604,6 +579,9 @@ def tar(source, target_file, working_dir=None, skip_list=[]):
         for exclude_path in skip_list:
             cmd += ['--exclude', '%s/*' % exclude_path]
 
+    if extra:
+        cmd.extend(extra)
+
     cmd.append(source)
     try:
         execute(*cmd, run_as_root=True)
@@ -614,12 +592,17 @@ def tar(source, target_file, working_dir=None, skip_list=[]):
         return False
 
 
-def untar(target_file, destination):
+def untar(target_file, destination, extra=None):
     """
     wrapper for untarring files into a destination directory
     """
+
+    cmd = ['tar', '-xf', target_file, '-C', destination]
+    if extra:
+        cmd.extend(extra)
+
     try:
-        execute('tar', '-xf', target_file, '-C', destination, run_as_root=True)
+        execute(*cmd, run_as_root=True)
         return True
     except exception.InstanceUnacceptable as err:
         LOG.error(_('Error untarring: %s') % target_file)

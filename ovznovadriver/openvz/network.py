@@ -25,6 +25,7 @@ from nova.openstack.common import log as logging
 from nova.virt import netutils
 from ovznovadriver.localization import _
 from ovznovadriver.openvz import file as ovzfile
+from ovznovadriver.openvz.container import OvzContainer
 from ovznovadriver.openvz.file_ext import boot as ovzboot
 from ovznovadriver.openvz.file_ext import shutdown as ovzshutdown
 from ovznovadriver.openvz.network_drivers import tc as ovztc
@@ -41,18 +42,18 @@ class OVZNetworkInterfaces(object):
     Helper class for managing interfaces in OpenVz
     """
     #TODO(imsplitbit): fix this to work with redhat based distros
-    def __init__(self, interface_info, network_info=None):
+    def __init__(self, container, interface_info, network_info=None):
         """
         Manage the network interfaces for your OpenVz containers.
         """
         self.interface_info = interface_info
         self.network_info = network_info
         LOG.debug(_('Interface info: %s') % self.interface_info)
-        self.boot_file = ovzboot.OVZBootFile(self.interface_info[0]['id'], 755)
+        self.container = container
+        self.boot_file = ovzboot.OVZBootFile(container.ovz_id, 755)
         with self.boot_file:
             self.boot_file.set_contents(list())
-        self.shutdown_file = ovzshutdown.OVZShutdownFile(
-            self.interface_info[0]['id'], 755)
+        self.shutdown_file = ovzshutdown.OVZShutdownFile(container.ovz_id, 755)
         with self.shutdown_file:
             self.shutdown_file.set_contents(list())
 
@@ -62,10 +63,11 @@ class OVZNetworkInterfaces(object):
         """
         if CONF.ovz_use_veth_devs:
             for net_dev in self.interface_info:
-                self._add_netif(net_dev['id'], net_dev['name'],
-                                net_dev['bridge'], net_dev['mac'])
+                self._add_netif(net_dev['name'], net_dev['bridge'],
+                                net_dev['mac'])
                 tc_rules = ovztc.OVZTcRules()
-                tc_rules.instance_info(net_dev['id'], net_dev['address'],
+                tc_rules.instance_info(self.container.nova_id,
+                                       net_dev['address'],
                                        net_dev['vz_host_if'])
                 with self.boot_file:
                     self.boot_file.append(tc_rules.container_start())
@@ -76,7 +78,7 @@ class OVZNetworkInterfaces(object):
             self._fill_templates()
         else:
             for net_dev in self.interface_info:
-                self._add_ip(net_dev['id'], net_dev['address'])
+                self._add_ip(net_dev['address'])
 
         with self.boot_file:
             self.boot_file.write()
@@ -84,8 +86,7 @@ class OVZNetworkInterfaces(object):
         with self.shutdown_file:
             self.shutdown_file.write()
 
-        self._set_nameserver(self.interface_info[0]['id'],
-                             self.interface_info[0]['dns'])
+        self._set_nameserver(self.interface_info[0]['dns'])
 
     def _fill_templates(self):
         """
@@ -120,7 +121,7 @@ class OVZNetworkInterfaces(object):
         debian_path = '/etc/network/interfaces'
         prefix = '%(private_dir)s/%(instance_id)s' %\
                  {'private_dir': CONF.ovz_ve_private_dir,
-                  'instance_id': self.interface_info[0]['id']}
+                  'instance_id': self.container.ovz_id}
         prefix = os.path.abspath(prefix)
 
         #TODO(imsplitbit): fix this placeholder for RedHat compatibility.
@@ -139,7 +140,7 @@ class OVZNetworkInterfaces(object):
             raise exception.InvalidMetadata(
                 _('Variant %(variant)s is not known') % locals())
 
-    def _add_netif(self, instance_id, netif, bridge, host_mac):
+    def _add_netif(self, netif, bridge, host_mac):
         """
         This is a work around to add the eth devices the way OpenVZ
         wants them.
@@ -149,12 +150,13 @@ class OVZNetworkInterfaces(object):
         vzctl set 1 --save --netif_add \
             eth0,,veth1.eth0,11:11:11:11:11:11,br100
         """
-        host_if = 'veth%s.%s' % (instance_id, netif)
-        ovz_utils.execute('vzctl', 'set', instance_id, '--save', '--netif_add',
+        host_if = 'veth%s.%s' % (self.container.ovz_id, netif)
+        ovz_utils.execute('vzctl', 'set', self.container.ovz_id, '--save',
+                          '--netif_add',
                           '%s,,%s,%s,%s' % (netif, host_if, host_mac, bridge),
                           run_as_root=True)
 
-    def _add_ip(self, instance_id, ip):
+    def _add_ip(self, ip):
         """
         Add an IP address to a container if you are not using veth devices.
 
@@ -167,10 +169,10 @@ class OVZNetworkInterfaces(object):
         making it unusable to all but local users and therefore unusable to
         nova.
         """
-        ovz_utils.execute('vzctl', 'set', instance_id, '--save', '--ipadd', ip,
-                          run_as_root=True)
+        ovz_utils.execute('vzctl', 'set', self.container.ovz_id, '--save',
+                          '--ipadd', ip, run_as_root=True)
 
-    def _set_nameserver(self, instance_id, dns):
+    def _set_nameserver(self, dns):
         """
         Get the nameserver for the assigned network and set it using
         OpenVz's tools.
@@ -182,7 +184,7 @@ class OVZNetworkInterfaces(object):
         If this fails to run an exception is raised as this will indicate
         the container's inability to do name resolution.
         """
-        ovz_utils.execute('vzctl', 'set', instance_id, '--save',
+        ovz_utils.execute('vzctl', 'set', self.container.ovz_id, '--save',
                           '--nameserver', dns, run_as_root=True)
 
 
@@ -196,3 +198,4 @@ class OVZNetworkFile(ovzfile.OVZFile):
 
     def __init__(self, filename):
         super(OVZNetworkFile, self).__init__(filename, 644)
+

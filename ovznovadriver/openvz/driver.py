@@ -34,6 +34,8 @@ from nova.virt import driver
 from nova.virt import images
 from ovznovadriver.localization import _
 from ovznovadriver.openvz import file as ovzfile
+from ovznovadriver.openvz.container import OvzContainer
+from ovznovadriver.openvz.container import OvzContainers
 from ovznovadriver.openvz.file_ext import boot as ovzboot
 from ovznovadriver.openvz.file_ext import ext_storage
 from ovznovadriver.openvz.file_ext import shutdown as ovzshutdown
@@ -263,14 +265,10 @@ class OpenVzDriver(driver.ComputeDriver):
         Return the names of all the instances known to the container
         layer, as a list.
         """
-        out = ovz_utils.execute(
-            'vzlist', '--all', '--no-header', '--output', 'ctid',
-            raise_on_error=False, run_as_root=True)
         ctids = list()
-        if out:
-            for line in out.splitlines():
-                ctid = line.split()[0]
-                ctids.append(ctid)
+        containers = OvzContainers.list()
+        for container in containers:
+            ctids.append(container.ovz_id)
 
         return ctids
 
@@ -280,16 +278,10 @@ class OpenVzDriver(driver.ComputeDriver):
         layer, as a list.
         """
         uuids = list()
-        out = ovz_utils.execute(
-            'vzlist', '--all', '--no-header', '-o', 'description',
-            raise_on_error=False, run_as_root=True)
-        if out:
-            for line in out.splitlines():
-                try:
-                    uuids.append(json.loads(line)['uuid'])
-                except (KeyError, ValueError):
-                    LOG.debug(_("Unable to find a valid uuid. Are there "
-                                "any instances?"))
+        containers = OvzContainers.list()
+        for container in containers:
+            if container.uuid is not None:
+                uuids.append(container.uuid)
 
         return uuids
 
@@ -312,7 +304,7 @@ class OpenVzDriver(driver.ComputeDriver):
         host_stats['vcpus_used'] = ovz_utils.get_vcpu_used()
         host_stats['cpu_info'] = json.dumps(ovz_utils.get_cpuinfo())
         host_stats['memory_mb'] = ovz_utils.get_memory_mb_total()
-        host_stats['memory_mb_used'] = ovz_utils.get_memory_mb_used()
+        host_stats['memory_mb_used'] = OvzContainers.get_memory_mb_used()
         host_stats['host_memory_total'] = host_stats['memory_mb']
         host_stats['host_memory_free'] = (host_stats['memory_mb'] -
                                           host_stats['memory_mb_used'])
@@ -360,11 +352,15 @@ class OpenVzDriver(driver.ComputeDriver):
         # it more durable during failure. And roll back changes made leading
         # up to the error.
         self._cache_image(context, instance)
-        self._create_vz(instance)
-        self._set_vz_os_hint(instance)
-        self._configure_vz(instance)
-        self._set_name(instance)
-        self._set_description(instance)
+        container = OvzContainer.create(
+            image=instance['image_ref'],
+            uuid=instance['uuid'],
+            name=instance['name'],
+            nova_id=instance['id'],
+        )
+        # TODO(jimbobhickville) - move this stuff to OvzContainer
+        self._set_vz_os_hint(container)
+        self._configure_vz(container)
 
         # TODO(imsplitbit): There's probably a better way to do this
         has_networking = False
@@ -376,11 +372,12 @@ class OpenVzDriver(driver.ComputeDriver):
             has_networking = False
         if has_networking:
             self.plug_vifs(instance, network_info)
-            self._setup_networking(instance, network_info)
+            self._setup_networking(container, network_info)
 
-        self._set_hostname(instance)
+        # TODO(jimbobhickville) - move this stuff to OvzContainer
+        self._set_hostname(container, hostname=instance['hostname'])
         self._set_instance_size(instance)
-        self._set_onboot(instance)
+        self._set_onboot(container)
 
         if block_device_info:
             self._attach_volumes(
@@ -418,34 +415,7 @@ class OpenVzDriver(driver.ComputeDriver):
         timer.f = _wait_for_boot
         return timer.start(interval=0.5)
 
-    def _create_vz(self, instance):
-        """
-        Attempt to load the image from openvz's image cache, upon failure
-        cache the image and then retry the load.
-
-        Run the command:
-
-        vzctl create <ctid> --ostemplate <image_ref>
-
-        If this fails to execute an exception is raised because this is the
-        first in a long list of many critical steps that are necessary for
-        creating a working VE.
-        """
-
-        # TODO(imsplitbit): This needs to set an os template for the image
-        # as well as an actual OS template for OpenVZ to know what config
-        # scripts to use.  This can be problematic because there is no concept
-        # of OS name, it is arbitrary so we will need to find a way to
-        # correlate this to what type of disto the image actually is because
-        # this is the clue for openvz's utility scripts.  For now we will have
-        # to set it to 'ubuntu'
-
-        # This will actually drop the os from the local image cache
-        ovz_utils.execute(
-            'vzctl', 'create', instance['id'], '--ostemplate',
-            instance['image_ref'], run_as_root=True)
-
-    def _set_vz_os_hint(self, instance, ostemplate='ubuntu'):
+    def _set_vz_os_hint(self, container, ostemplate='ubuntu'):
         """
         This exists as a stopgap because currently there are no os hints
         in the image managment of nova.  There are ways of hacking it in
@@ -469,7 +439,7 @@ class OpenVzDriver(driver.ComputeDriver):
         # of resolver, hostname and the like
 
         # TODO(imsplitbit): change the ostemplate default value to a flag
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', container.ovz_id, '--save',
                           '--ostemplate', ostemplate, run_as_root=True)
 
     def _cache_image(self, context, instance):
@@ -491,7 +461,7 @@ class OpenVzDriver(driver.ComputeDriver):
         else:
             return False
 
-    def _configure_vz(self, instance, config='basic'):
+    def _configure_vz(self, container, config='basic'):
         """
         This adds the container root into the vz meta data so that
         OpenVz acknowledges it as a container.  Punting to a basic
@@ -507,10 +477,10 @@ class OpenVzDriver(driver.ComputeDriver):
         If this fails to run successfully an exception is raised because the
         container this executes against requires a base config to start.
         """
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', container.ovz_id, '--save',
                           '--applyconfig', config, run_as_root=True)
 
-    def _set_onboot(self, instance):
+    def _set_onboot(self, container):
         """
         Method to set the onboot status of the instance. This is done
         so that openvz does not handle booting, and instead the compute
@@ -522,7 +492,7 @@ class OpenVzDriver(driver.ComputeDriver):
 
         If I fail to run an exception is raised.
         """
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--onboot', 'no',
+        ovz_utils.execute('vzctl', 'set', container.ovz_id, '--onboot', 'no',
                           '--save', run_as_root=True)
 
     def _start(self, instance):
@@ -542,14 +512,15 @@ class OpenVzDriver(driver.ComputeDriver):
         # NOTE: The VE will throw a warning that the hostname is invalid
         # if it isn't valid.  This is logged in LOG.error and is not
         # an indication of failure.
-        ovz_utils.execute('vzctl', 'start', instance['id'], run_as_root=True)
+        container = OvzContainer.find(uuid=instance['uuid'])
+        ovz_utils.execute('vzctl', 'start', container.ovz_id, run_as_root=True)
 
         # Set instance state as RUNNING
         self.virtapi.instance_update(
             context.get_admin_context(), instance['uuid'],
             {'power_state': power_state.RUNNING})
 
-        bf = ovzboot.OVZBootFile(instance['id'], 700)
+        bf = ovzboot.OVZBootFile(container.ovz_id, 700)
         with bf:
             bf.read()
             bf.run_contents()
@@ -566,19 +537,20 @@ class OpenVzDriver(driver.ComputeDriver):
 
         If this fails to run an exception is raised for obvious reasons.
         """
-        sf = ovzshutdown.OVZShutdownFile(instance['id'], 700)
+        container = OvzContainer.find(uuid=instance['uuid'])
+        sf = ovzshutdown.OVZShutdownFile(container.ovz_id, 700)
         with sf:
             sf.read()
             sf.run_contents()
 
-        ovz_utils.execute('vzctl', 'stop', instance['id'], run_as_root=True)
+        ovz_utils.execute('vzctl', 'stop', container.ovz_id, run_as_root=True)
 
         # Update instance state
         self.virtapi.instance_update(
             context.get_admin_context(), instance['uuid'],
             {'power_state': power_state.SHUTDOWN})
 
-    def _set_hostname(self, instance, hostname=None):
+    def _set_hostname(self, container, hostname):
         """
         Set the hostname of a given container.  The option to pass
         a hostname to the method was added with the intention to allow the
@@ -596,10 +568,7 @@ class OpenVzDriver(driver.ComputeDriver):
         name mismatches.  One could argue that this should be a softer error
         and I might have a hard time arguing with that one.
         """
-        if not hostname:
-            hostname = instance['hostname']
-
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', container.ovz_id, '--save',
                           '--hostname', hostname, run_as_root=True)
 
     def _gratuitous_arp_all_addresses(self, instance, network_info):
@@ -648,70 +617,10 @@ class OpenVzDriver(driver.ComputeDriver):
         gratuitous arp fails the container will most likely be available as
         soon as the switching/routing infrastructure's arp cache clears.
         """
-        ovz_utils.execute('vzctl', 'exec2', instance_id, 'arping', '-q', '-c',
-                          '5', '-A', '-I', interface, ip_address,
+        container = OvzContainer.find(nova_id=instance_id)
+        ovz_utils.execute('vzctl', 'exec2', container.ovz_id, 'arping', '-q',
+                          '-c', '5', '-A', '-I', interface, ip_address,
                           run_as_root=True, raise_on_error=False)
-
-    def _set_name(self, instance):
-        """
-        Store the name of an instance in the name field for openvz.  This is
-        done to facilitate the get_info method which only accepts an instance
-        name as an argument.
-
-        Run the command:
-
-        vzctl set <ctid> --save --name <name>
-
-        If this fails to run an exception is raised.  This is due to the
-        requirement of the get_info method to have the name field filled out.
-        """
-        ovz_utils.execute(
-            'vzctl', 'set', instance['id'], '--save', '--name',
-            instance['name'], run_as_root=True)
-
-    def _set_description(self, instance):
-        """
-        Save information important to associate nova information with this
-        instance.
-
-        :param instance:
-        :return: None
-        """
-        info = json.dumps({'uuid': instance['uuid']})
-        ovz_utils.execute(
-            'vzctl', 'set', instance['id'], '--save', '--description', info,
-            run_as_root=True)
-
-    def _find_by_name(self, instance_name):
-        """
-        This method exists to facilitate get_info.  The get_info method only
-        takes an instance name as it's argument.
-
-        Run the command:
-
-        vzlist -H --all --name_filter <name>
-
-        If this fails to run an exception is raised because if we cannot
-        locate an instance by it's name then the driver will fail to work.
-        """
-
-        # The required method get_info only accepts a name so we need a way
-        # to correlate name and id without maintaining another state/meta db
-        out = ovz_utils.execute('vzlist', '-H', '-o', 'ctid,status,name',
-                                '--all', '--name_filter', instance_name,
-                                raise_on_error=False, run_as_root=True)
-
-        # If out is empty, there is no instance known to OpenVz by that
-        # name and an exception should be raised
-        if not out:
-            raise exception.InstanceNotFound(
-                _('Instance %s doesnt exist') % instance_name)
-
-        # Break the output into usable chunks
-        out = out.split()
-        result = {'name': out[2], 'id': out[0], 'state': out[1]}
-        LOG.debug(_('Results from _find_by_name: %s') % result)
-        return result
 
     def _access_control(self, instance, host, mask=32, port=None,
                         protocol='tcp', access_type='allow'):
@@ -805,7 +714,7 @@ class OpenVzDriver(driver.ComputeDriver):
         vzctl set <ctid> --save --numflock <number>
         """
 
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--numflock', max_file_descriptors,
                           run_as_root=True)
 
@@ -816,7 +725,7 @@ class OpenVzDriver(driver.ComputeDriver):
         vzctl set <ctid> --save --numfile <number>
         """
 
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--numfile', max_file_descriptors,
                           run_as_root=True)
 
@@ -836,7 +745,7 @@ class OpenVzDriver(driver.ComputeDriver):
                         'defaulting to %s') % CONF.ovz_numtcpsock_default)
             tcp_sockets = CONF.ovz_numtcpsock_default
 
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--numtcpsock', tcp_sockets, run_as_root=True)
 
     def _set_instance_size(self, instance, network_info=None,
@@ -905,8 +814,9 @@ class OpenVzDriver(driver.ComputeDriver):
         resized and/or migrated
         """
         LOG.debug(_('Setting network sizing'))
-        bf = ovzboot.OVZBootFile(instance['id'], 755)
-        sf = ovzshutdown.OVZShutdownFile(instance['id'], 755)
+        container = OvzContainer.find(uuid=instance['uuid'])
+        bf = ovzboot.OVZBootFile(container.ovz_id, 755)
+        sf = ovzshutdown.OVZShutdownFile(container.ovz_id, 755)
 
         if not is_migration:
             with sf:
@@ -928,14 +838,14 @@ class OpenVzDriver(driver.ComputeDriver):
         with bf:
             bf.set_contents(list())
 
-        LOG.debug(_('Getting network dict for: %s') % instance['id'])
-        interfaces = ovz_utils.generate_network_dict(instance['id'],
+        LOG.debug(_('Getting network dict for: %s') % container.uuid)
+        interfaces = ovz_utils.generate_network_dict(container,
                                                      network_info)
         for net_dev in interfaces:
             LOG.debug(_('Adding tc rules for: %s') %
                       net_dev['vz_host_if'])
             tc = ovztc.OVZTcRules()
-            tc.instance_info(net_dev['id'], net_dev['address'],
+            tc.instance_info(instance['id'], net_dev['address'],
                              net_dev['vz_host_if'])
             with bf:
                 bf.append(tc.container_start())
@@ -944,9 +854,12 @@ class OpenVzDriver(driver.ComputeDriver):
                 sf.append(tc.container_stop())
 
         with bf:
-            LOG.debug(_('Running TC rules for: %s') % instance['id'])
-            bf.run_contents()
-            LOG.debug(_('Saving TC rules for: %s') % instance['id'])
+            if not is_migration:
+                # during migration, the instance isn't yet running, so it'll
+                # just spew errors to attempt to apply these rules before then
+                LOG.debug(_('Running TC rules for: %s') % instance['uuid'])
+                bf.run_contents()
+            LOG.debug(_('Saving TC rules for: %s') % instance['uuid'])
             bf.write()
 
         with sf:
@@ -965,7 +878,7 @@ class OpenVzDriver(driver.ComputeDriver):
         If this fails to run then an exception is raised because this affects
         the memory allocation for the container.
         """
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--vmguarpages', num_pages, run_as_root=True)
 
     def _set_privvmpages(self, instance, num_pages):
@@ -983,7 +896,7 @@ class OpenVzDriver(driver.ComputeDriver):
         the running container to operate properly within it's memory
         constraints.
         """
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--privvmpages', num_pages, run_as_root=True)
 
     def _set_kmemsize(self, instance, instance_memory):
@@ -1010,7 +923,7 @@ class OpenVzDriver(driver.ComputeDriver):
             float(CONF.ovz_kmemsize_barrier_differential) / 100.0))
         kmemsize = '%d:%d' % (kmem_barrier, kmem_limit)
 
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--kmemsize', kmemsize, run_as_root=True)
 
     def _set_cpuunits(self, instance, percent_of_resource):
@@ -1035,7 +948,7 @@ class OpenVzDriver(driver.ComputeDriver):
         if units > self.MAX_CPUUNITS:
             units = self.MAX_CPUUNITS
 
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--cpuunits', units, run_as_root=True)
 
     def _set_cpulimit(self, instance, percent_of_resource):
@@ -1061,7 +974,7 @@ class OpenVzDriver(driver.ComputeDriver):
         if cpulimit > self.utility['CPULIMIT']:
             cpulimit = self.utility['CPULIMIT']
 
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--cpulimit', cpulimit, run_as_root=True)
 
     def _set_cpus(self, instance, vcpus):
@@ -1091,7 +1004,7 @@ class OpenVzDriver(driver.ComputeDriver):
 
         LOG.debug(_('VCPUs: %s') % vcpus)
 
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save', '--cpus',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save', '--cpus',
                           vcpus, run_as_root=True)
 
     def _set_ioprio(self, instance, memory_mb):
@@ -1127,8 +1040,8 @@ class OpenVzDriver(driver.ComputeDriver):
             # ioprio can't be higher than 7 so set a ceiling
             ioprio = 7
 
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save', '--ioprio',
-                          ioprio, run_as_root=True)
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+                          '--ioprio', ioprio, run_as_root=True)
 
     def _set_diskspace(self, instance, root_gb):
         """
@@ -1154,11 +1067,11 @@ class OpenVzDriver(driver.ComputeDriver):
         soft_limit = '%s%s' % (soft_limit, CONF.ovz_disk_space_increment)
         hard_limit = '%s%s' % (hard_limit, CONF.ovz_disk_space_increment)
 
-        ovz_utils.execute('vzctl', 'set', instance['id'], '--save',
+        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--diskspace', '%s:%s' % (soft_limit, hard_limit),
                           run_as_root=True)
 
-    def _setup_networking(self, instance, network_info):
+    def _setup_networking(self, container, network_info):
         """
         Create the vifs for the container's virtual networking.  This should
         only need to be run on instance spawn.
@@ -1168,9 +1081,10 @@ class OpenVzDriver(driver.ComputeDriver):
         :return:
         """
         LOG.debug(_('network_info: %s') % network_info)
-        interfaces = ovz_utils.generate_network_dict(instance['id'],
+        interfaces = ovz_utils.generate_network_dict(container,
                                                      network_info)
-        ifaces_fh = ovznetwork.OVZNetworkInterfaces(interfaces, network_info)
+        ifaces_fh = ovznetwork.OVZNetworkInterfaces(container, interfaces,
+                                                    network_info)
         ifaces_fh.add()
 
     def plug_vifs(self, instance, network_info):
@@ -1208,7 +1122,8 @@ class OpenVzDriver(driver.ComputeDriver):
         given to this method will be in an inconsistent state.
         """
         # Run the TC rules
-        sf = ovzshutdown.OVZShutdownFile(instance['id'], 700)
+        container = OvzContainer.find(uuid=instance['uuid'])
+        sf = ovzshutdown.OVZShutdownFile(container.ovz_id, 700)
         with sf:
             sf.read()
             sf.run_contents()
@@ -1217,7 +1132,8 @@ class OpenVzDriver(driver.ComputeDriver):
         # restarted the instance.
         self.virtapi.instance_update(
             context, instance['uuid'], {'power_state': power_state.PAUSED})
-        ovz_utils.execute('vzctl', 'restart', instance['id'], run_as_root=True)
+        ovz_utils.execute('vzctl', 'restart', container.ovz_id,
+                          run_as_root=True)
 
         def _wait_for_reboot():
             try:
@@ -1235,7 +1151,7 @@ class OpenVzDriver(driver.ComputeDriver):
                     {'power_state': power_state.RUNNING})
                 LOG.info(_('Instance %s rebooted') % instance['name'])
                 # Run the TC rules
-                bf = ovzboot.OVZBootFile(instance['id'], 700)
+                bf = ovzboot.OVZBootFile(container.ovz_id, 700)
                 with bf:
                     bf.read()
                     bf.run_contents()
@@ -1276,10 +1192,11 @@ class OpenVzDriver(driver.ComputeDriver):
         written on the instance; the third is the contents of the file, also
         base64-encoded.
         """
+        container = OvzContainer.find(uuid=instance['uuid'])
         path = base64.b64decode(b64_path)
         LOG.debug(_('Injecting file: %s') % path)
         file_path = '%s/%s/%s' % (
-            CONF.ovz_ve_private_dir, instance['id'], path)
+            CONF.ovz_ve_private_dir, container.ovz_id, path)
         LOG.debug(_('New file path: %s') % file_path)
         fh = ovzfile.OVZFile(file_path, 644)
         with fh:
@@ -1305,8 +1222,8 @@ class OpenVzDriver(driver.ComputeDriver):
         """
 
         user_pass_map = 'root:%s' % new_pass
-
-        ovz_utils.execute('vzctl', 'exec2', instance_id, 'echo',
+        container = OvzContainer.find(nova_id=instance_id)
+        ovz_utils.execute('vzctl', 'exec2', container.ovz_id, 'echo',
                           user_pass_map, '|', 'chpasswd', run_as_root=True)
 
     def pause(self, instance):
@@ -1329,7 +1246,7 @@ class OpenVzDriver(driver.ComputeDriver):
         admin_context = context.get_admin_context()
 
         # Suspend the instance
-        ovz_utils.execute('vzctl', 'chkpnt', instance['id'],
+        ovz_utils.execute('vzctl', 'chkpnt', instance['uuid'],
                           '--suspend', run_as_root=True)
 
         # Set the instance power state to suspended for accurate reporting
@@ -1339,7 +1256,7 @@ class OpenVzDriver(driver.ComputeDriver):
                 {'power_state': power_state.SUSPENDED})
         except exception.InstanceNotFound as err:
             LOG.error(_('Instance %s not found in the database') %
-                      instance['id'])
+                      instance['uuid'])
             LOG.error(err)
 
     def resume(self, instance, network_info, block_device_info=None):
@@ -1350,7 +1267,7 @@ class OpenVzDriver(driver.ComputeDriver):
         admin_context = context.get_admin_context()
 
         # Resume the instance
-        ovz_utils.execute('vzctl', 'chkpnt', instance['id'],
+        ovz_utils.execute('vzctl', 'chkpnt', instance['uuid'],
                           '--resume', run_as_root=True)
 
         # Set the instance power state to running
@@ -1360,7 +1277,7 @@ class OpenVzDriver(driver.ComputeDriver):
                 {'power_state': power_state.RUNNING})
         except exception.InstanceNotFound as err:
             LOG.error(_('Instance %s not found in the database') %
-                      instance['id'])
+                      instance['uuid'])
             LOG.error(err)
 
     def _clean_orphaned_files(self, instance_id):
@@ -1378,8 +1295,17 @@ class OpenVzDriver(driver.ComputeDriver):
         """
         # first assemble a list of files that need to be cleaned up, then
         # do the deed.
+        try:
+            container = OvzContainer.find(nova_id=instance_id)
+        except exception.InstanceNotFound:
+            LOG.info("Instance %s cannot be deleted, since it does not exist"
+                     % instance_id)
+            return
+        except BaseException:
+            raise
+
         for filename in os.listdir(CONF.ovz_config_dir):
-            if fnmatch.fnmatch(filename, '%s.*' % instance_id):
+            if fnmatch.fnmatch(filename, '%s.*' % container.ovz_id):
                 # minor protection for /
                 if CONF.ovz_config_dir == '/':
                     raise exception.InvalidDevicePath(
@@ -1482,7 +1408,15 @@ class OpenVzDriver(driver.ComputeDriver):
         """
         Run destroy on the instance
         """
-        ovz_utils.execute('vzctl', 'destroy', instance_id, run_as_root=True)
+        try:
+            container = OvzContainer.find(nova_id=instance_id)
+            container.delete()
+        except exception.InstanceNotFound:
+            LOG.info("Instance %s cannot be deleted, since it does not exist"
+                     % instance_id)
+            return
+        except BaseException:
+            raise
 
     def _attach_volumes(self, instance, block_device_mapping):
         """
@@ -1506,9 +1440,10 @@ class OpenVzDriver(driver.ComputeDriver):
         volumes being attached to OpenVz we require a filesystem be created
         already.
         """
+        container = OvzContainer.find(uuid=instance['uuid'])
         if connection_info['driver_volume_type'] == 'iscsi':
             volume = ovziscsi.OVZISCSIStorageDriver(
-                instance['id'], mountpoint, connection_info)
+                container.ovz_id, mountpoint, connection_info)
             volume.discover_volume()
         else:
             raise NotImplementedError(
@@ -1520,7 +1455,7 @@ class OpenVzDriver(driver.ComputeDriver):
         # just a precaution and stores the volume information necessary
         # to manually re-establish communication should nova services
         # go away.
-        ext_str = ext_storage.OVZExtStorage(instance['id'])
+        ext_str = ext_storage.OVZExtStorage(container.ovz_id)
         ext_str.add_volume(mountpoint, connection_info)
         ext_str.save()
 
@@ -1535,9 +1470,10 @@ class OpenVzDriver(driver.ComputeDriver):
         :param mountpoint:
         :return:
         """
+        container = OvzContainer.find(uuid=instance['uuid'])
         if connection_info['driver_volume_type'] == 'iscsi':
             volume = ovziscsi.OVZISCSIStorageDriver(
-                instance['id'], mountpoint, connection_info)
+                container.ovz_id, mountpoint, connection_info)
         else:
             raise NotImplementedError(
                 _('There are no suitable storage drivers'))
@@ -1575,7 +1511,8 @@ class OpenVzDriver(driver.ComputeDriver):
 
         # Remove storage connection info from the storage repo for the
         # instance.
-        ext_str = ext_storage.OVZExtStorage(instance['id'])
+        container = OvzContainer.find(uuid=instance['uuid'])
+        ext_str = ext_storage.OVZExtStorage(container.ovz_id)
         ext_str.remove_volume(mountpoint)
         ext_str.save()
 
@@ -1591,20 +1528,14 @@ class OpenVzDriver(driver.ComputeDriver):
         This method should raise exception.InstanceNotFound if the hypervisor
         has no knowledge of the instance
         """
-        try:
-            meta = self._find_by_name(instance['name'])
-            LOG.debug(_('Get_info meta: %s') % meta)
-        except exception.InstanceNotFound:
-            LOG.error(_('Instance %s Not Found') % instance['name'])
-            raise exception.InstanceNotFound(
-                'Instance %s Not Found' % instance['name'])
+        container = OvzContainer.find(name=instance['name'])
 
         # Store the assumed state as the default
         # Coerced into an INT because it comes from SQLAlchemy as a string
         state = int(instance['power_state'])
 
-        LOG.debug(_('Instance %(id)s is in state %(power_state)s') %
-                  {'id': instance['id'], 'power_state': state})
+        LOG.debug(_('Instance %(uuid)s is in state %(power_state)s') %
+                  {'uuid': container.uuid, 'power_state': state})
 
         # NOTE(imsplitbit): This is not ideal but it looks like nova uses
         # codes returned from libvirt and xen which don't correlate to
@@ -1612,9 +1543,9 @@ class OpenVzDriver(driver.ComputeDriver):
         # 'stopped'.  There is some contention on how to handle systems
         # that were shutdown intentially however I am defaulting to the
         # nova expected behavior.
-        if meta['state'] == 'running':
+        if container.state == 'running':
             new_state = power_state.RUNNING
-        elif meta['state'] is None or meta['state'] == '-':
+        elif container.state is None or container.state == '-':
             new_state = power_state.NOSTATE
         else:
             new_state = power_state.SHUTDOWN
@@ -1623,8 +1554,8 @@ class OpenVzDriver(driver.ComputeDriver):
             state = new_state
 
         LOG.debug(
-            _('OpenVz says instance %(id)s is in state %(state)s') %
-            {'id': instance['id'], 'state': state})
+            _('OpenVz says instance %(uuid)s is in state %(state)s') %
+            {'uuid': container.uuid, 'state': state})
 
         # TODO(imsplitbit): Need to add all metrics to this dict.
         return {'state': state,
@@ -1748,6 +1679,11 @@ class OpenVzDriver(driver.ComputeDriver):
             instance.system_metadata['migration_type'] = 'resize_in_place'
             instance.save()
             return
+        elif instance.system_metadata.get('migration_type'):
+            # if we failed to clear this metadata on a previous migration
+            # it will cause everything to blow up, so clear it out now
+            del instance.system_metadata['migration_type']
+            instance.save()
 
         # Validate the ovz_migration_method flag
         if CONF.ovz_migration_method not in ['vzmigrate', 'python']:
@@ -1772,8 +1708,9 @@ class OpenVzDriver(driver.ComputeDriver):
         if CONF.ovz_migration_method == 'vzmigrate':
             self._vzmigration_send_to_host(instance, dest)
         elif CONF.ovz_migration_method == 'python':
+            container = OvzContainer.find(uuid=instance['uuid'])
             self._pymigration_send_to_host(
-                instance, ovz_utils.generate_network_dict(instance['id'],
+                instance, ovz_utils.generate_network_dict(container,
                                                           network_info),
                 block_device_info, dest, live_migration)
 
@@ -1784,8 +1721,9 @@ class OpenVzDriver(driver.ComputeDriver):
         python implemented vz migration driver.
         """
         LOG.debug(_('Beginning pure python based migration'))
+        container = OvzContainer.find(uuid=instance['uuid'])
         mobj = ovz_migration.OVZMigration(
-            instance, network_info, block_device_info, dest, live_migration)
+            container, network_info, block_device_info, dest, live_migration)
         mobj.dump_and_transfer_instance()
         mobj.send()
 
@@ -1805,15 +1743,16 @@ class OpenVzDriver(driver.ComputeDriver):
                 cmd += CONF.ovz_vzmigrate_opts
         if CONF.ovz_vzmigrate_online_migration:
             cmd.append('--online')
-        if CONF.ovz_vzmigrate_destroy_source_container_on_migrate:
-            cmd += ['-r', 'yes']
+        # default is yes
+        if not CONF.ovz_vzmigrate_destroy_source_container_on_migrate:
+            cmd += ['-r', 'no']
         if CONF.ovz_vzmigrate_verbose_migration_logging:
             cmd.append('-v')
         cmd.append(dest)
-        cmd.append(instance['id'])
+        cmd.append(instance['uuid'])
         LOG.debug(
             _('Beginning the migration of %(instance_id)s to %(dest)s') %
-            {'instance_id': instance['id'], 'dest': dest})
+            {'instance_id': instance['uuid'], 'dest': dest})
         out = ovz_utils.execute(*cmd, run_as_root=True)
         LOG.debug(_('Output from migration process: %s') % out)
 
@@ -1835,6 +1774,7 @@ class OpenVzDriver(driver.ComputeDriver):
         if migration_type == 'resize_in_place':
             # This is a resize on the same host so its simple, resize
             # in place and then exit the method
+            LOG.debug(_('Finishing resize-in-place for %s') % instance['uuid'])
             self._set_instance_size(instance, network_info, False)
             return
 
@@ -1857,29 +1797,25 @@ class OpenVzDriver(driver.ComputeDriver):
             # volumes.
             self._attach_volumes(instance, block_device_info)
 
-        # Somehow the name of the instance is lost in migration so
-        # set it here.
-        self._set_name(instance)
-
-        # The uuid is lost from the description field in the migration
-        # so set it here.
-        self._set_description(instance)
-
         if resize_instance:
             LOG.debug(_('A resize after migration was requested: %s') %
-                      instance['id'])
+                      instance['uuid'])
             self._set_instance_size(instance, network_info, True)
             LOG.debug(_('Resized instance after migration: %s') %
-                      instance['id'])
+                      instance['uuid'])
         else:
             LOG.debug(_('Regenerating TC rules for instance %s') %
-                      instance['id'])
+                      instance['uuid'])
             self._generate_tc_rules(instance, network_info, True)
             LOG.debug(_('Regenerated TC rules for instance %s') %
-                      instance['id'])
+                      instance['uuid'])
 
         if not live_migration:
             self._start(instance)
+
+        container = OvzContainer.find(uuid=instance['uuid'])
+        # Some data gets lost in the migration, make sure ovz has current info
+        container.save_ovz_metadata()
 
     def _pymigrate_finish_migration(self, instance, network_info,
                                     live_migration):
@@ -1888,11 +1824,25 @@ class OpenVzDriver(driver.ComputeDriver):
         working instance.
         """
         LOG.debug(_('Beginning python based finish_migration'))
-        interfaces = ovz_utils.generate_network_dict(instance['id'],
+
+        # generate a unique local id on the destination
+        container = OvzContainer(
+            ovz_id=OvzContainer.get_next_id(),
+            uuid=instance['uuid'],
+            nova_id=instance['id'],
+            host=CONF.host,
+            name=instance['name'],
+        )
+
+        interfaces = ovz_utils.generate_network_dict(container,
                                                      network_info)
         mobj = ovz_migration.OVZMigration(
-            instance, interfaces, None, live_migration)
+            container, interfaces, None, live_migration)
         mobj.undump_instance()
+
+        # the vif name should have changed during migration, so set it up anew
+        self.plug_vifs(instance, network_info)
+        self._setup_networking(container, network_info)
 
         # Crude but we just need to give things time to settle before cleaning
         # up all the dumped stuff
@@ -1907,29 +1857,30 @@ class OpenVzDriver(driver.ComputeDriver):
         Sequence to run on destination host should the migration be done
         by the vzmigrate tools.
         """
-        LOG.debug(_('Stopping instance: %s') % instance['id'])
+        LOG.debug(_('Stopping instance: %s') % instance['uuid'])
         self._stop(instance)
-        LOG.debug(_('Stopped instance: %s') % instance['id'])
+        LOG.debug(_('Stopped instance: %s') % instance['uuid'])
 
         self.plug_vifs(instance, network_info)
 
-        LOG.debug(_('Starting instance: %s') % instance['id'])
+        LOG.debug(_('Starting instance: %s') % instance['uuid'])
         self._start(instance)
-        LOG.debug(_('Started instance: %s') % instance['id'])
+        LOG.debug(_('Started instance: %s') % instance['uuid'])
 
     def confirm_migration(self, migration, instance, network_info):
         """
         Run on the source host to confirm the migration and cleans up the
         the files from the source host.
         """
-        LOG.debug(_('Beginning confirm migration for %s') % instance['id'])
+        LOG.debug(_('Beginning confirm migration for %s') % instance['uuid'])
 
         # Get the instance metadata to see what we need to do
         meta = ovz_utils.read_instance_metadata(instance['id'])
         migration_type = meta.get('migration_type')
 
+        container = OvzContainer.find(uuid=instance['uuid'])
         live_migration = True
-        ext_str = ext_storage.OVZExtStorage(instance['id'])
+        ext_str = ext_storage.OVZExtStorage(container.ovz_id)
         if ext_str._volumes:
             live_migration = False
 
@@ -1956,8 +1907,8 @@ class OpenVzDriver(driver.ComputeDriver):
             if status == power_state.SHUTDOWN:
                 LOG.debug(_('Cleaning up migration on source host'))
                 mobj = ovz_migration.OVZMigration(
-                    instance, ovz_utils.generate_network_dict(
-                        instance['id'], network_info), None, live_migration)
+                    container, ovz_utils.generate_network_dict(
+                        container, network_info), None, live_migration)
                 mobj.cleanup_source()
                 self._destroy(instance['id'])
                 self._clean_orphaned_files(instance['id'])
@@ -1965,15 +1916,15 @@ class OpenVzDriver(driver.ComputeDriver):
                 LOG.warn(
                     _('Check instance: %(instance_id)s, it may be broken. '
                         'power_state: %(ps)s') %
-                    {'instance_id': instance['id'],
+                    {'instance_id': instance['uuid'],
                      'ps': status})
         except exception.InstanceNotFound:
             LOG.warn(
                 _('Instance %s not found, migration cleaned itself up?') %
-                instance['id'])
+                instance['uuid'])
         except exception.InstanceUnacceptable:
             LOG.error(_('Failed to stop and destroy the instance'))
-        LOG.debug(_('Finished confirm migration for %s') % instance['id'])
+        LOG.debug(_('Finished confirm migration for %s') % instance['uuid'])
 
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
@@ -1993,32 +1944,35 @@ class OpenVzDriver(driver.ComputeDriver):
                                                       'migration_type'):
                 LOG.debug(_('Removed migration_type metadata'))
                 LOG.debug(_('Done reverting in-place migration for %s') %
-                          instance['id'])
+                          instance['uuid'])
             else:
                 LOG.debug(_('Failed to remove migration_type metadata'))
             return
 
+        container = OvzContainer.find(uuid=instance['uuid'])
+        container.save_ovz_metadata()
         if block_device_info:
             LOG.debug(_('Instance %s has volumes') % instance['id'])
             # the instance has external volumes and was not a live migration
             # so we need to reattach external volumes
             live_migration = False
-            LOG.debug(_('Starting instance %s, after revert') % instance['id'])
-            ext_str = ext_storage.OVZExtStorage(instance['id'])
+            LOG.debug(_('Starting instance %s, after revert') %
+                      instance['uuid'])
+            ext_str = ext_storage.OVZExtStorage(container.ovz_id)
 
             for mountpoint, connection_info in ext_str.volumes():
                 self.attach_volume(connection_info, instance, mountpoint)
 
             self._start(instance)
         else:
-            LOG.debug(_('Instance %s has no volumes') % instance['id'])
+            LOG.debug(_('Instance %s has no volumes') % instance['uuid'])
             live_migration = True
-            LOG.debug(_('Resuming live migration for %s') % instance['id'])
+            LOG.debug(_('Resuming live migration for %s') % instance['uuid'])
             self.resume(instance, network_info)
 
         mobj = ovz_migration.OVZMigration(
-            instance, ovz_utils.generate_network_dict(
-                instance['id'], network_info), None, live_migration)
+            container, ovz_utils.generate_network_dict(
+                container, network_info), None, live_migration)
         mobj.cleanup_files()
 
     def get_host_ip_addr(self):
