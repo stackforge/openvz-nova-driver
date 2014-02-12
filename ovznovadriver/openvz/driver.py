@@ -285,7 +285,11 @@ class OpenVzDriver(driver.ComputeDriver):
             raise_on_error=False, run_as_root=True)
         if out:
             for line in out.splitlines():
-                uuids.append(json.loads(line)['uuid'])
+                try:
+                    uuids.append(json.loads(line)['uuid'])
+                except Exception:
+                    LOG.debug(_("Unable to find a valid uuid. Are there "
+                                "any instances?"))
 
         return uuids
 
