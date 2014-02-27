@@ -149,6 +149,13 @@ class OVZISCSIStorageDriver(ovzvolume.OVZVolume):
         self._run_iscsiadm(("--logout",), raise_on_error=False)
         self._run_iscsiadm(('--op', 'delete'), raise_on_error=False)
 
+    def get_blockdev(self, device_name):
+        return ovz_utils.execute('blockdev',
+                                 '--getsize64',
+                                 device_name,
+                                 attempts=CONF.ovz_system_num_tries,
+                                 run_as_root=True)
+
     @lockutils.synchronized('iscsiadm_lock', 'openvz-')
     def rescan(self):
         """Rescan the client storage connection."""

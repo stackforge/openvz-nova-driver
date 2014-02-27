@@ -1096,6 +1096,26 @@ class OpenVzDriver(driver.ComputeDriver):
             if vif.labeled_ips():
                 self.vif_driver.plug(instance, vif)
 
+    # TODO(pdmars): get_blockdev and rescan_volume are added to expose this
+    # information to nova-compute for online volume extending. They are
+    # required because after Cinder extends the volume, it needs nova-compute
+    # to run rescan on the compute host and then it needs to query the size
+    # of the block device until it reports the new size. Currently, the
+    # extensions to Cinder and Nova for online extending are in progress and
+    # haven't been merged into the public yet.
+    def get_blockdev(self, instance, connection_info):
+        volume = ovziscsi.OVZISCSIStorageDriver(instance['id'],
+                                                None,
+                                                connection_info)
+        device_name = volume.device_name()
+        return volume.get_blockdev(device_name)
+
+    def rescan_volume(self, instance, connection_info):
+        volume = ovziscsi.OVZISCSIStorageDriver(instance['id'],
+                                                None,
+                                                connection_info)
+        volume.rescan()
+
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
         """Reboot the specified instance.
