@@ -1096,6 +1096,19 @@ class OpenVzDriver(driver.ComputeDriver):
             if vif.labeled_ips():
                 self.vif_driver.plug(instance, vif)
 
+    def get_blockdev(self, instance, connection_info):
+        volume = ovziscsi.OVZISCSIStorageDriver(instance['id'],
+                                                None,
+                                                connection_info)
+        device_name = volume.device_name()
+        return volume.get_blockdev(device_name)
+
+    def rescan_volume(self, instance, connection_info):
+        volume = ovziscsi.OVZISCSIStorageDriver(instance['id'],
+                                                None,
+                                                connection_info)
+        volume.rescan()
+
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
         """Reboot the specified instance.
