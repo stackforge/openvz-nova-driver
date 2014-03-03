@@ -131,7 +131,8 @@ class OVZTcRules(object):
             'line_speed': CONF.ovz_tc_max_line_speed
         }
         ovz_utils.save_instance_metadata(self.instance['id'],
-                                         'tc_id', self.tc_id)
+                                         'tc_id', self.tc_id,
+                                         fail_on_dupe_key=False)
         return self._fill_template(template, search_list).splitlines()
 
     def container_stop(self):
@@ -144,7 +145,8 @@ class OVZTcRules(object):
             'vz_address': self.address
         }
         ovz_utils.save_instance_metadata(self.instance['id'],
-                                         'tc_id', self.tc_id)
+                                         'tc_id', self.tc_id,
+                                         fail_on_dupe_key=False)
         return self._fill_template(template, search_list).splitlines()
 
     def host_start(self):
@@ -250,7 +252,7 @@ class OVZTcRules(object):
         Save the tc id in the instance metadata in the database
         """
         ovz_utils.save_instance_metadata(self.instance['id'], 'tc_id',
-                                         self.tc_id, fail_on_dupe_key=True)
+                                         self.tc_id, fail_on_dupe_key=False)
 
     def _get_instance_tc_id(self):
         """
