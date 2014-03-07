@@ -34,12 +34,17 @@ import re
 import time
 
 CONF = cfg.CONF
-CONF.register_opt(
+CONF.register_opts([
     cfg.IntOpt('ovz_volume_settle_num_tries',
                default=10,
                help='Number of attempts before we determine that a device '
                     'has had time to settle and we are beyond a reasonable '
-                    'wait time'))
+                    'wait time'),
+    cfg.BoolOpt('ovz_create_disk_partition',
+                default=False,
+                help='Create a partition on the volume (if it does not exist) '
+                     'when it is attached to the container'),
+])
 LOG = logging.getLogger('ovznovadriver.openvz.volume')
 
 
@@ -266,8 +271,9 @@ class OVZVolume(object):
 
         :return:
         """
-        LOG.debug(_('Partitioning disk in _attach_raw_devices'))
-        self._partition_disk()
+        if CONF.ovz_create_disk_partition:
+            LOG.debug(_('Partitioning disk in _attach_raw_devices'))
+            self._partition_disk()
 
         # storage for block device major/minor pairs for setting in
         # the container config file.
