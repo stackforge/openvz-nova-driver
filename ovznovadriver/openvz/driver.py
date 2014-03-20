@@ -68,9 +68,6 @@ openvz_conn_opts = [
     cfg.StrOpt('ovz_bridge_device',
                default='br100',
                help='Bridge device to map veth devices to'),
-    cfg.StrOpt('ovz_disk_space_increment',
-               default='G',
-               help='Disk subscription increment'),
     cfg.StrOpt('ovz_vif_driver',
                default='ovznovadriver.openvz.network_drivers'
                        '.network_bridge.OVZNetworkBridgeDriver',
@@ -113,25 +110,9 @@ openvz_conn_opts = [
     cfg.BoolOpt('ovz_vzmigrate_verbose_migration_logging',
                 default=True,
                 help='Log verbose messages from vzmigrate command'),
-    cfg.BoolOpt('ovz_use_cpuunit',
-                default=True,
-                help='Use OpenVz cpuunits for guaranteed minimums'),
-    cfg.BoolOpt('ovz_use_cpulimit',
-                default=True,
-                help='Use OpenVz cpulimit for maximum cpu limits'),
-    cfg.BoolOpt('ovz_use_cpus',
-                default=True,
-                help='Use OpenVz cpus for max cpus '
-                     'available to the container'),
-    cfg.BoolOpt('ovz_use_ioprio',
-                default=True,
-                help='Use IO fair scheduling'),
     cfg.BoolOpt('ovz_disk_space_oversub',
                 default=True,
                 help='Allow over subscription of local disk'),
-    cfg.BoolOpt('ovz_use_disk_quotas',
-                default=True,
-                help='Use disk quotas to contain disk usage'),
     cfg.BoolOpt('ovz_use_veth_devs',
                 default=True,
                 help='Use veth devices rather than venet'),
@@ -155,9 +136,6 @@ openvz_conn_opts = [
     cfg.IntOpt('ovz_kmemsize_barrier_differential',
                default=10,
                help='Difference of kmemsize barrier vs limit'),
-    cfg.IntOpt('ovz_memory_unit_size',
-               default=512,
-               help='Unit size in MB'),
     cfg.IntOpt('ovz_tc_id_max',
                default=9999,
                help='Max TC id to be used in generating a new id'),
@@ -167,22 +145,12 @@ openvz_conn_opts = [
     cfg.IntOpt('ovz_tc_max_line_speed',
                default=1000,
                help='Line speed in Mbit'),
-    cfg.IntOpt('ovz_file_descriptors_per_unit',
-               default=4096,
-               help='Max open file descriptors per memory unit'),
     cfg.IntOpt('ovz_rsync_iterations',
                default=1,
                help='Number of times to rsync a container when migrating'),
     cfg.IntOpt('ovz_numtcpsock_default',
                default=2000,
                help='Default number of tcp sockets to give each container'),
-    cfg.FloatOpt('ovz_disk_space_oversub_percent',
-                 default=1.10,
-                 help='Local disk over subscription percentage'),
-    cfg.FloatOpt('ovz_cpulimit_overcommit_multiplier',
-                 default=1.0,
-                 help='Multiplier for cpulimit to facilitate over '
-                      'committing cpu resources'),
     cfg.DictOpt('ovz_numtcpsock_map',
                 default={"8192": 3000, "1024": 2000, "4096": 2000,
                          "2048": 2000, "16384": 4000, "512": 2000},
@@ -197,15 +165,14 @@ LOG = logging.getLogger('ovznovadriver.openvz.driver')
 
 
 class OpenVzDriver(driver.ComputeDriver):
-    # OpenVz sets the upper limit of cpuunits to 500000
-    MAX_CPUUNITS = 500000
 
     def __init__(self, virtapi, read_only=False):
         """
         Create an instance of the openvz connection.
         """
         super(OpenVzDriver, self).__init__(virtapi)
-        self.utility = dict()
+        # self.utility = dict()
+        self.resource_manager = VZResourceManager(virtapi)
         self.host_stats = dict()
         self._initiator = None
         self.host = None
@@ -224,7 +191,8 @@ class OpenVzDriver(driver.ComputeDriver):
             self.host = host
 
         LOG.debug(_('Determining the computing power of the host'))
-        self._get_cpulimit()
+        # self._get_cpulimit()
+        self.resource_manager.get_cpulimit()
         self._refresh_host_stats()
 
         LOG.debug(_('Flushing host TC rules if there are any'))
@@ -339,13 +307,29 @@ class OpenVzDriver(driver.ComputeDriver):
         that it was before this call began.
         """
 
+        LOG.debug(_('MARIO instance: %s') % instance)
+        LOG.debug(_('MARIO dir(instance): %s') % dir(instance))
+        LOG.debug(_('MARIO instance.system_metadata: %s') % instance['system_metadata'])
+        LOG.debug(_('MARIO network_info: %s') % network_info)
+
+        instance_size = ovz_utils.format_system_metadata(
+            instance['system_metadata'])
+        LOG.debug(_('MARIO instance_size: %s') % instance_size)
+
+        # TODO (jcru) got extra_specs!
+        instance_type = self.virtapi.flavor_get(context, instance['instance_type_id'])
+        LOG.debug(_('MARIO instance_type: %s') % instance_type)
+        LOG.debug(_('MARIO instance_type.extra_specs: %s') % instance_type['extra_specs'])
+        raise Exception
+
         # Update state to inform the nova stack that the VE is launching
         self.virtapi.instance_update(
             context, instance['uuid'], {'power_state': power_state.BUILDING})
         LOG.debug(_('instance %s: is building') % instance['name'])
 
         # Get current usages and resource availablity.
-        self._get_cpuunits_usage()
+        # self._get_cpuunits_usage()
+        self.resource_manager.get_cpuunits_usage()
 
         # Go through the steps of creating a container
         # TODO(imsplitbit): Need to add conditionals around this stuff to make
@@ -358,9 +342,9 @@ class OpenVzDriver(driver.ComputeDriver):
             name=instance['name'],
             nova_id=instance['id'],
         )
-        # TODO(jimbobhickville) - move this stuff to OvzContainer
-        self._set_vz_os_hint(container)
-        self._configure_vz(container)
+
+        container.set_vz_os_hint(ostemplate='ubuntu')
+        container.apply_config(config='basic')
 
         # TODO(imsplitbit): There's probably a better way to do this
         has_networking = False
@@ -377,6 +361,8 @@ class OpenVzDriver(driver.ComputeDriver):
         # TODO(jimbobhickville) - move this stuff to OvzContainer
         self._set_hostname(container, hostname=instance['hostname'])
         self._set_instance_size(instance)
+            # self.resource_manager.configure_container_resources(container,
+            #     instance['flavorid'])
         self._set_onboot(container)
 
         if block_device_info:
@@ -415,32 +401,7 @@ class OpenVzDriver(driver.ComputeDriver):
         timer.f = _wait_for_boot
         return timer.start(interval=0.5)
 
-    def _set_vz_os_hint(self, container, ostemplate='ubuntu'):
-        """
-        This exists as a stopgap because currently there are no os hints
-        in the image managment of nova.  There are ways of hacking it in
-        via image_properties but this requires special case code just for
-        this driver.
 
-        Run the command:
-
-        vzctl set <ctid> --save --ostemplate <ostemplate>
-
-        Currently ostemplate defaults to ubuntu.  This facilitates setting
-        the ostemplate setting in OpenVZ to allow the OpenVz helper scripts
-        to setup networking, nameserver and hostnames.  Because of this, the
-        openvz driver only works with debian based distros.
-
-        If this fails to run an exception is raised as this is a critical piece
-        in making openvz run a container.
-        """
-
-        # This sets the distro hint for OpenVZ to later use for the setting
-        # of resolver, hostname and the like
-
-        # TODO(imsplitbit): change the ostemplate default value to a flag
-        ovz_utils.execute('vzctl', 'set', container.ovz_id, '--save',
-                          '--ostemplate', ostemplate, run_as_root=True)
 
     def _cache_image(self, context, instance):
         """
@@ -460,25 +421,6 @@ class OpenVzDriver(driver.ComputeDriver):
             return True
         else:
             return False
-
-    def _configure_vz(self, container, config='basic'):
-        """
-        This adds the container root into the vz meta data so that
-        OpenVz acknowledges it as a container.  Punting to a basic
-        config for now.
-
-        Run the command:
-
-        vzctl set <ctid> --save --applyconfig <config>
-
-        This sets the default configuration file for openvz containers.  This
-        is a requisite step in making a container from an image tarball.
-
-        If this fails to run successfully an exception is raised because the
-        container this executes against requires a base config to start.
-        """
-        ovz_utils.execute('vzctl', 'set', container.ovz_id, '--save',
-                          '--applyconfig', config, run_as_root=True)
 
     def _set_onboot(self, container):
         """
@@ -698,8 +640,12 @@ class OpenVzDriver(driver.ComputeDriver):
         flavor spec.  If this fails an exception is raised because this
         means that the instance flavor setting couldn't be rescued.
         """
+        container = OvzContainer.find(uuid=instance['uuid'])
         try:
             self._set_instance_size(instance)
+            # container.set_flavor_settings(instance)
+            # self.resource_manager.configure_container_resources(container,
+            #     instance['flavorid'])
             if restart_instance:
                 self.reboot(instance, None, None, None, None)
             return True
@@ -707,369 +653,160 @@ class OpenVzDriver(driver.ComputeDriver):
             raise exception.InstanceUnacceptable(
                 _("Instance size reset FAILED"))
 
-    def _set_numflock(self, instance, max_file_descriptors):
-        """
-        Run the command:
-
-        vzctl set <ctid> --save --numflock <number>
-        """
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--numflock', max_file_descriptors,
-                          run_as_root=True)
-
-    def _set_numfiles(self, instance, max_file_descriptors):
-        """
-        Run the command:
-
-        vzctl set <ctid> --save --numfile <number>
-        """
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--numfile', max_file_descriptors,
-                          run_as_root=True)
-
-    def _set_numtcpsock(self, instance, memory_mb):
-        """
-        Run the commnand:
-
-        vzctl set <ctid> --save --numtcpsock <number>
-
-        :param instance:
-        :return:
-        """
-        try:
-            tcp_sockets = CONF.ovz_numtcpsock_map[str(memory_mb)]
-        except (ValueError, TypeError, KeyError, cfg.NoSuchOptError):
-            LOG.error(_('There was no acceptable tcpsocket number found '
-                        'defaulting to %s') % CONF.ovz_numtcpsock_default)
-            tcp_sockets = CONF.ovz_numtcpsock_default
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--numtcpsock', tcp_sockets, run_as_root=True)
-
-    def _set_instance_size(self, instance, network_info=None,
-                           is_migration=False):
-        """
-        Given that these parameters make up and instance's 'size' we are
-        bundling them together to make resizing an instance on the host
-        an easier task.
-        """
-        instance_size = ovz_utils.format_system_metadata(
-            instance['system_metadata'])
-
-        LOG.debug(_('Instance system metadata: %s') % instance_size)
-
-        if is_migration:
-            instance_memory_mb = instance_size.get(
-                'new_instance_type_memory_mb', None)
-            if not instance_memory_mb:
-                instance_memory_mb = instance_size.get(
-                    'instance_type_memory_mb')
-            instance_vcpus = instance_size.get('new_instance_type_vcpus', None)
-            if not instance_vcpus:
-                instance_vcpus = instance_size.get('instance_type_vcpus')
-            instance_root_gb = instance_size.get(
-                'new_instance_type_root_gb', None)
-            if not instance_root_gb:
-                instance_root_gb = instance_size.get('instance_type_root_gb')
-        else:
-            instance_memory_mb = instance_size.get('instance_type_memory_mb')
-            instance_vcpus = instance_size.get('instance_type_vcpus')
-            instance_root_gb = instance_size.get('instance_type_root_gb')
-
-        instance_memory_mb = int(instance_memory_mb)
-        instance_vcpus = int(instance_vcpus)
-        instance_root_gb = int(instance_root_gb)
-
-        instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
-        instance_memory_pages = self._calc_pages(instance_memory_mb)
-        percent_of_resource = self._percent_of_resource(instance_memory_mb)
-
-        memory_unit_size = int(CONF.ovz_memory_unit_size)
-        max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
-        max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
-        self._set_vmguarpages(instance, instance_memory_pages)
-        self._set_privvmpages(instance, instance_memory_pages)
-        self._set_kmemsize(instance, instance_memory_bytes)
-        self._set_numfiles(instance, max_fd)
-        self._set_numflock(instance, max_fd)
-        if CONF.ovz_use_cpuunit:
-            self._set_cpuunits(instance, percent_of_resource)
-        if CONF.ovz_use_cpulimit:
-            self._set_cpulimit(instance, percent_of_resource)
-        if CONF.ovz_use_cpus:
-            self._set_cpus(instance, instance_vcpus)
-        if CONF.ovz_use_ioprio:
-            self._set_ioprio(instance, instance_memory_mb)
-        if CONF.ovz_use_disk_quotas:
-            self._set_diskspace(instance, instance_root_gb)
-
-        if network_info:
-            self._generate_tc_rules(instance, network_info, is_migration)
-
-    def _generate_tc_rules(self, instance, network_info, is_migration=False):
-        """
-        Utility method to generate tc info for instances that have been
-        resized and/or migrated
-        """
-        LOG.debug(_('Setting network sizing'))
-        container = OvzContainer.find(uuid=instance['uuid'])
-        bf = ovzboot.OVZBootFile(container.ovz_id, 755)
-        sf = ovzshutdown.OVZShutdownFile(container.ovz_id, 755)
-
-        if not is_migration:
-            with sf:
-                LOG.debug(_('Cleaning TC rules for %s') % instance['id'])
-                sf.read()
-                sf.run_contents(raise_on_error=False)
-
-        # On resize we throw away existing tc_id and make a new one
-        # because the resize *could* have taken place on a different host
-        # where the tc_id is already in use.
-        meta = ovz_utils.read_instance_metadata(instance['id'])
-        tc_id = meta.get('tc_id', None)
-        if tc_id:
-            ovz_utils.remove_instance_metadata_key(instance['id'], 'tc_id')
-
-        with sf:
-            sf.set_contents(list())
-
-        with bf:
-            bf.set_contents(list())
-
-        LOG.debug(_('Getting network dict for: %s') % container.uuid)
-        interfaces = ovz_utils.generate_network_dict(container,
-                                                     network_info)
-        for net_dev in interfaces:
-            LOG.debug(_('Adding tc rules for: %s') %
-                      net_dev['vz_host_if'])
-            tc = ovztc.OVZTcRules()
-            tc.instance_info(instance['id'], net_dev['address'],
-                             net_dev['vz_host_if'])
-            with bf:
-                bf.append(tc.container_start())
-
-            with sf:
-                sf.append(tc.container_stop())
-
-        with bf:
-            if not is_migration:
-                # during migration, the instance isn't yet running, so it'll
-                # just spew errors to attempt to apply these rules before then
-                LOG.debug(_('Running TC rules for: %s') % instance['uuid'])
-                bf.run_contents()
-            LOG.debug(_('Saving TC rules for: %s') % instance['uuid'])
-            bf.write()
-
-        with sf:
-            sf.write()
-
-    def _set_vmguarpages(self, instance, num_pages):
-        """
-        Set the vmguarpages attribute for a container.  This number represents
-        the number of 4k blocks of memory that are guaranteed to the container.
-        This is what shows up when you run the command 'free' in the container.
-
-        Run the command:
-
-        vzctl set <ctid> --save --vmguarpages <num_pages>
-
-        If this fails to run then an exception is raised because this affects
-        the memory allocation for the container.
-        """
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--vmguarpages', num_pages, run_as_root=True)
-
-    def _set_privvmpages(self, instance, num_pages):
-        """
-        Set the privvmpages attribute for a container.  This represents the
-        memory allocation limit.  Think of this as a bursting limit.  For now
-        We are setting to the same as vmguarpages but in the future this can be
-        used to thin provision a box.
-
-        Run the command:
-
-        vzctl set <ctid> --save --privvmpages <num_pages>
-
-        If this fails to run an exception is raised as this is essential for
-        the running container to operate properly within it's memory
-        constraints.
-        """
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--privvmpages', num_pages, run_as_root=True)
-
-    def _set_kmemsize(self, instance, instance_memory):
-        """
-        Set the kmemsize attribute for a container.  This represents the
-        amount of the container's memory allocation that will be made
-        available to the kernel.  This is used for tcp connections, unix
-        sockets and the like.
-
-        This runs the command:
-
-        vzctl set <ctid> --save --kmemsize <barrier>:<limit>
-
-        If this fails to run an exception is raised as this is essential for
-        the container to operate under a normal load.  Defaults for this
-        setting are completely inadequate for any normal workload.
-        """
-
-        # Now use the configuration CONF to calculate the appropriate
-        # values for both barrier and limit.
-        kmem_limit = int(instance_memory * (
-            float(CONF.ovz_kmemsize_percent_of_memory) / 100.0))
-        kmem_barrier = int(kmem_limit * (
-            float(CONF.ovz_kmemsize_barrier_differential) / 100.0))
-        kmemsize = '%d:%d' % (kmem_barrier, kmem_limit)
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--kmemsize', kmemsize, run_as_root=True)
-
-    def _set_cpuunits(self, instance, percent_of_resource):
-        """
-        Set the cpuunits setting for the container.  This is an integer
-        representing the number of cpu fair scheduling counters that the
-        container has access to during one complete cycle.
-
-        Run the command:
-
-        vzctl set <ctid> --save --cpuunits <units>
-
-        If this fails to run an exception is raised because this is the secret
-        sauce to constraining each container within it's subscribed slice of
-        the host node.
-        """
-        LOG.debug(_('Reported cpuunits %s') % self.MAX_CPUUNITS)
-        LOG.debug(_('Reported percent of resource: %s') % percent_of_resource)
-
-        units = int(round(self.MAX_CPUUNITS * percent_of_resource))
-
-        if units > self.MAX_CPUUNITS:
-            units = self.MAX_CPUUNITS
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--cpuunits', units, run_as_root=True)
-
-    def _set_cpulimit(self, instance, percent_of_resource):
-        """
-        This is a number in % equal to the amount of cpu processing power
-        the container gets.  NOTE: 100% is 1 logical cpu so if you have 12
-        cores with hyperthreading enabled then 100% of the whole host machine
-        would be 2400% or --cpulimit 2400.
-
-        Run the command:
-
-        vzctl set <ctid> --save --cpulimit <cpulimit>
-
-        If this fails to run an exception is raised because this is the secret
-        sauce to constraining each container within it's subscribed slice of
-        the host node.
-        """
-
-        cpulimit = int(round(
-            (self.utility['CPULIMIT'] * percent_of_resource) *
-            CONF.ovz_cpulimit_overcommit_multiplier))
-
-        if cpulimit > self.utility['CPULIMIT']:
-            cpulimit = self.utility['CPULIMIT']
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--cpulimit', cpulimit, run_as_root=True)
-
-    def _set_cpus(self, instance, vcpus):
-        """
-        The number of logical cpus that are made available to the container.
-        Default to showing 2 cpus to each container at a minimum.
-
-        Run the command:
-
-        vzctl set <ctid> --save --cpus <num_cpus>
-
-        If this fails to run an exception is raised because this limits the
-        number of cores that are presented to each container and if this fails
-        to set *ALL* cores will be presented to every container, that be bad.
-        """
-        vcpus = int(vcpus)
-        LOG.debug(_('VCPUs: %s') % vcpus)
-        utility_cpus = self.utility['CPULIMIT'] / 100
-
-        if vcpus > utility_cpus:
-            LOG.debug(
-                _('OpenVZ thinks vcpus "%(vcpus)s" '
-                  'is greater than "%(utility_cpus)s"') % locals())
-            # We can't set cpus higher than the number of actual logical cores
-            # on the system so set a cap here
-            vcpus = self.utility['CPULIMIT'] / 100
-
-        LOG.debug(_('VCPUs: %s') % vcpus)
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save', '--cpus',
-                          vcpus, run_as_root=True)
-
-    def _set_ioprio(self, instance, memory_mb):
-        """
-        Set the IO priority setting for a given container.  This is represented
-        by an integer between 0 and 7.
-        Run the command:
-
-        vzctl set <ctid> --save --ioprio <iopriority>
-
-        If this fails to run an exception is raised because all containers are
-        given the same weight by default which will cause bad performance
-        across all containers when there is input/output contention.
-        """
-        # The old algorithm made it impossible to distinguish between a
-        # 512MB container and a 2048MB container for IO priority.  We will
-        # for now follow a simple map to create a more non-linear
-        # relationship between the flavor sizes and their IO priority groups
-
-        # The IO priority of a container is grouped in 1 of 8 groups ranging
-        # from 0 to 7.  We can calculate an appropriate value by finding out
-        # how many ovz_memory_unit_size chunks are in the container's memory
-        # allocation and then using python's math library to solve for that
-        # number's logarithm.
-        num_chunks = int(int(memory_mb) / CONF.ovz_memory_unit_size)
-
-        try:
-            ioprio = int(round(math.log(num_chunks, 2)))
-        except ValueError:
-            ioprio = 0
-
-        if ioprio > 7:
-            # ioprio can't be higher than 7 so set a ceiling
-            ioprio = 7
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--ioprio', ioprio, run_as_root=True)
-
-    def _set_diskspace(self, instance, root_gb):
-        """
-        Implement OpenVz disk quotas for local disk space usage.
-        This method takes a soft and hard limit.  This is also the amount
-        of diskspace that is reported by system tools such as du and df inside
-        the container.  If no argument is given then one will be calculated
-        based on the values in the instance_types table within the database.
-
-        Run the command:
-
-        vzctl set <ctid> --save --diskspace <soft_limit:hard_limit>
-
-        If this fails to run an exception is raised because this command
-        limits a container's ability to hijack all available disk space.
-        """
-
-        soft_limit = int(root_gb)
-        hard_limit = int(soft_limit * CONF.ovz_disk_space_oversub_percent)
-
-        # Now set the increment of the limit.  I do this here so that I don't
-        # have to do this in every line above.
-        soft_limit = '%s%s' % (soft_limit, CONF.ovz_disk_space_increment)
-        hard_limit = '%s%s' % (hard_limit, CONF.ovz_disk_space_increment)
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--diskspace', '%s:%s' % (soft_limit, hard_limit),
-                          run_as_root=True)
+    def _generate_vz_settings(self, instance, network=None):
+        """Generates VZ container settings based on the flavor/instance-type,
+        configs, and calculations"""
+
+        # Get flavor info which contains extra_specs
+        instance_type = self.virtapi.flavor_get(
+            context.get_admin_context(),
+            instance['instance_type_id'])
+
+        #TODO (jcru) change to named tuple or class
+        vz_configs = {}
+
+        # Extract valid VZ settings from flavor extra_specs
+        vz_prefix = 'vz_'
+        for key, value in instance_type['extra_specs'].iteritems():
+            key = key.lower()
+            # we are looking for extra_specs that start with vz_
+            # which signify openvz settings
+            if key.startswith(vz_prefix):
+                vz_key = key.lstrip(vz_prefix)
+                setattr(vz_configs, vz_key, value)
+
+        return vz_configs
+
+    # def _set_instance_size(self, instance, network_info=None,
+    #                        is_migration=False):
+    #     """
+    #     Given that these parameters make up and instance's 'size' we are
+    #     bundling them together to make resizing an instance on the host
+    #     an easier task.
+    #     """
+        # instance_size = ovz_utils.format_system_metadata(
+        #     instance['system_metadata'])
+
+        # LOG.debug(_('Instance system metadata: %s') % instance_size)
+
+
+        # # DETERMINE FLAVOR INFO
+        # # * instance_memory_mb
+        # # * instance_vcpus
+        # # * instance_root_gb
+        # if is_migration:
+        #     instance_memory_mb = instance_size.get(
+        #         'new_instance_type_memory_mb', None)
+        #     if not instance_memory_mb:
+        #         instance_memory_mb = instance_size.get(
+        #             'instance_type_memory_mb')
+
+        #     instance_vcpus = instance_size.get('new_instance_type_vcpus', None)
+        #     if not instance_vcpus:
+        #         instance_vcpus = instance_size.get('instance_type_vcpus')
+
+        #     instance_root_gb = instance_size.get(
+        #         'new_instance_type_root_gb', None)
+        #     if not instance_root_gb:
+        #         instance_root_gb = instance_size.get('instance_type_root_gb')
+        # else:
+        #     instance_memory_mb = instance_size.get('instance_type_memory_mb')
+        #     instance_vcpus = instance_size.get('instance_type_vcpus')
+        #     instance_root_gb = instance_size.get('instance_type_root_gb')
+
+        # instance_memory_mb = int(instance_memory_mb)
+        # instance_vcpus = int(instance_vcpus)
+        # instance_root_gb = int(instance_root_gb)
+
+        # #  CALCULATE CONFIGS
+        # instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
+        # instance_memory_pages = self._calc_pages(instance_memory_mb)
+        # percent_of_resource = self._percent_of_resource(instance_memory_mb)
+
+        # memory_unit_size = int(CONF.ovz_memory_unit_size)
+        # max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
+        # max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
+
+
+        #  APPLY CONFIGS
+        # self._set_vmguarpages(instance, instance_memory_pages)
+        # self._set_privvmpages(instance, instance_memory_pages)
+        # self._set_kmemsize(instance, instance_memory_bytes)
+
+        # self._set_numfiles(instance, max_fd)
+        # self._set_numflock(instance, max_fd)
+
+        # if CONF.ovz_use_cpuunit:
+        #     self._set_cpuunits(instance, percent_of_resource)
+        # if CONF.ovz_use_cpulimit:
+        #     self._set_cpulimit(instance, percent_of_resource)
+        # if CONF.ovz_use_cpus:
+        #     self._set_cpus(instance, instance_vcpus)
+
+        # if CONF.ovz_use_ioprio:
+        #     self._set_ioprio(instance, instance_memory_mb)
+        # if CONF.ovz_use_disk_quotas:
+        #     self._set_diskspace(instance, instance_root_gb)
+
+        # if network_info:
+        #     self._generate_tc_rules(instance, network_info, is_migration)
+
+    # def _generate_tc_rules(self, instance, network_info, is_migration=False):
+    #     """
+    #     Utility method to generate tc info for instances that have been
+    #     resized and/or migrated
+    #     """
+    #     LOG.debug(_('Setting network sizing'))
+    #     container = OvzContainer.find(uuid=instance['uuid'])
+    #     bf = ovzboot.OVZBootFile(container.ovz_id, 755)
+    #     sf = ovzshutdown.OVZShutdownFile(container.ovz_id, 755)
+
+    #     if not is_migration:
+    #         with sf:
+    #             LOG.debug(_('Cleaning TC rules for %s') % instance['id'])
+    #             sf.read()
+    #             sf.run_contents(raise_on_error=False)
+
+    #     # On resize we throw away existing tc_id and make a new one
+    #     # because the resize *could* have taken place on a different host
+    #     # where the tc_id is already in use.
+    #     meta = ovz_utils.read_instance_metadata(instance['id'])
+    #     tc_id = meta.get('tc_id', None)
+    #     if tc_id:
+    #         ovz_utils.remove_instance_metadata_key(instance['id'], 'tc_id')
+
+    #     with sf:
+    #         sf.set_contents(list())
+
+    #     with bf:
+    #         bf.set_contents(list())
+
+    #     LOG.debug(_('Getting network dict for: %s') % container.uuid)
+    #     interfaces = ovz_utils.generate_network_dict(container,
+    #                                                  network_info)
+    #     for net_dev in interfaces:
+    #         LOG.debug(_('Adding tc rules for: %s') %
+    #                   net_dev['vz_host_if'])
+    #         tc = ovztc.OVZTcRules()
+    #         tc.instance_info(instance['id'], net_dev['address'],
+    #                          net_dev['vz_host_if'])
+    #         with bf:
+    #             bf.append(tc.container_start())
+
+    #         with sf:
+    #             sf.append(tc.container_stop())
+
+    #     with bf:
+    #         if not is_migration:
+    #             # during migration, the instance isn't yet running, so it'll
+    #             # just spew errors to attempt to apply these rules before then
+    #             LOG.debug(_('Running TC rules for: %s') % instance['uuid'])
+    #             bf.run_contents()
+    #         LOG.debug(_('Saving TC rules for: %s') % instance['uuid'])
+    #         bf.write()
+
+    #     with sf:
+    #         sf.write()
 
     def _setup_networking(self, container, network_info):
         """
@@ -1590,67 +1327,44 @@ class OpenVzDriver(driver.ComputeDriver):
         """
         return ((int(instance_memory) * 1024) * 1024) / block_size
 
-    def _percent_of_resource(self, instance_memory):
-        """
-        In order to evenly distribute resources this method will calculate a
-        multiplier based on memory consumption for the allocated container and
-        the overall host memory. This can then be applied to the cpuunits in
-        self.utility to be passed as an argument to the self._set_cpuunits
-        method to limit cpu usage of the container to an accurate percentage of
-        the host.  This is only done on self.spawn so that later, should
-        someone choose to do so, they can adjust the container's cpu usage
-        up or down.
-        """
-        cont_mem_mb = (
-            float(instance_memory) / float(ovz_utils.get_memory_mb_total()))
+    # def _get_cpulimit(self):
+    #     """
+    #     Fetch the total possible cpu processing limit in percentage to be
+    #     divided up across all containers.  This is expressed in percentage
+    #     being added up by logical processor.  If there are 24 logical
+    #     processors then the total cpulimit for the host node will be
+    #     2400.
+    #     """
+    #     self.utility['CPULIMIT'] = ovz_utils.get_vcpu_total() * 100
+    #     LOG.debug(_('Updated cpulimit in utility'))
+    #     LOG.debug(
+    #         _('Current cpulimit in utility: %s') % self.utility['CPULIMIT'])
 
-        # We shouldn't ever have more than 100% but if for some unforseen
-        # reason we do, lets limit it to 1 to make all of the other
-        # calculations come out clean.
-        if cont_mem_mb > 1:
-            LOG.error(_('_percent_of_resource came up with more than 100%'))
-            return 1.0
-        else:
-            return cont_mem_mb
+    # def _get_cpuunits_usage(self):
+    #     """
+    #     Use openvz tools to discover the total used processing power. This is
+    #     done using the vzcpucheck -v command.
 
-    def _get_cpulimit(self):
-        """
-        Fetch the total possible cpu processing limit in percentage to be
-        divided up across all containers.  This is expressed in percentage
-        being added up by logical processor.  If there are 24 logical
-        processors then the total cpulimit for the host node will be
-        2400.
-        """
-        self.utility['CPULIMIT'] = ovz_utils.get_vcpu_total() * 100
-        LOG.debug(_('Updated cpulimit in utility'))
-        LOG.debug(
-            _('Current cpulimit in utility: %s') % self.utility['CPULIMIT'])
+    #     Run the command:
 
-    def _get_cpuunits_usage(self):
-        """
-        Use openvz tools to discover the total used processing power. This is
-        done using the vzcpucheck -v command.
+    #     vzcpucheck -v
 
-        Run the command:
-
-        vzcpucheck -v
-
-        If this fails to run an exception should not be raised as this is a
-        soft error and results only in the lack of knowledge of what the
-        current cpuunit usage of each container.
-        """
-        out = ovz_utils.execute(
-            'vzcpucheck', '-v', run_as_root=True, raise_on_error=False)
-        if out:
-            for line in out.splitlines():
-                line = line.split()
-                if len(line) > 0:
-                    if line[0].isdigit():
-                        LOG.debug(_('Usage for CTID %(id)s: %(usage)s') %
-                                  {'id': line[0], 'usage': line[1]})
-                        if int(line[0]) not in self.utility.keys():
-                            self.utility[int(line[0])] = dict()
-                        self.utility[int(line[0])] = int(line[1])
+    #     If this fails to run an exception should not be raised as this is a
+    #     soft error and results only in the lack of knowledge of what the
+    #     current cpuunit usage of each container.
+    #     """
+    #     out = ovz_utils.execute(
+    #         'vzcpucheck', '-v', run_as_root=True, raise_on_error=False)
+    #     if out:
+    #         for line in out.splitlines():
+    #             line = line.split()
+    #             if len(line) > 0:
+    #                 if line[0].isdigit():
+    #                     LOG.debug(_('Usage for CTID %(id)s: %(usage)s') %
+    #                               {'id': line[0], 'usage': line[1]})
+    #                     if int(line[0]) not in self.utility.keys():
+    #                         self.utility[int(line[0])] = dict()
+    #                     self.utility[int(line[0])] = int(line[1])
 
     def get_available_resource(self, nodename):
         """Retrieve resource info.
@@ -1790,12 +1504,17 @@ class OpenVzDriver(driver.ComputeDriver):
         # Get the instance metadata to see what we need to do
         meta = ovz_utils.read_instance_metadata(instance['id'])
         migration_type = meta.get('migration_type')
+        container = OvzContainer.find(uuid=instance['uuid'])
 
         if migration_type == 'resize_in_place':
             # This is a resize on the same host so its simple, resize
             # in place and then exit the method
             LOG.debug(_('Finishing resize-in-place for %s') % instance['uuid'])
             self._set_instance_size(instance, network_info, False)
+            # container.set_flavor_settings(instance, network_info, False)
+            # self.resource_manager.configure_container_resources(container,
+            #     instance['flavorid'])
+
             return
 
         if block_device_info:
@@ -1821,6 +1540,9 @@ class OpenVzDriver(driver.ComputeDriver):
             LOG.debug(_('A resize after migration was requested: %s') %
                       instance['uuid'])
             self._set_instance_size(instance, network_info, True)
+            # container.set_flavor_settings(instance, network_info, True)
+            # self.resource_manager.configure_container_resources(container,
+            #     instance['flavorid'])
             LOG.debug(_('Resized instance after migration: %s') %
                       instance['uuid'])
         else:
@@ -1833,7 +1555,6 @@ class OpenVzDriver(driver.ComputeDriver):
         if not live_migration:
             self._start(instance)
 
-        container = OvzContainer.find(uuid=instance['uuid'])
         # Some data gets lost in the migration, make sure ovz has current info
         container.save_ovz_metadata()
 
@@ -1953,6 +1674,7 @@ class OpenVzDriver(driver.ComputeDriver):
         LOG.debug(_('Beginning finish_revert_migration'))
         meta = ovz_utils.read_instance_metadata(instance['id'])
         migration_type = meta.get('migration_type')
+        container = OvzContainer.find(uuid=instance['uuid'])
 
         if migration_type == 'resize_in_place':
             # This is a resize on the same host so its simple, resize
@@ -1960,6 +1682,9 @@ class OpenVzDriver(driver.ComputeDriver):
             LOG.debug(_('Reverting in-place migration for %s') %
                       instance['id'])
             self._set_instance_size(instance, network_info)
+            # container.set_flavor_settings(instance, network_info)
+            # self.resource_manager.configure_container_resources(container,
+            #     instance['flavorid'])
             if ovz_utils.remove_instance_metadata_key(instance['id'],
                                                       'migration_type'):
                 LOG.debug(_('Removed migration_type metadata'))
@@ -1969,7 +1694,6 @@ class OpenVzDriver(driver.ComputeDriver):
                 LOG.debug(_('Failed to remove migration_type metadata'))
             return
 
-        container = OvzContainer.find(uuid=instance['uuid'])
         container.save_ovz_metadata()
         if block_device_info:
             LOG.debug(_('Instance %s has volumes') % instance['id'])
