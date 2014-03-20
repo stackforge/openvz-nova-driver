@@ -73,6 +73,8 @@ class OVZTcRules(object):
         :param vz_iface: interface on the hosts bridge that is associated with
         the instance
         """
+        # TODO(jcru) figure out if there is a case for no instance_id else
+        # take it out
         if not instance_id:
             self.instance_type = dict()
             self.instance_type['memory_mb'] = 2048
@@ -87,11 +89,23 @@ class OVZTcRules(object):
         self.address = address
         self.vz_iface = vz_iface
 
-        # Calculate the bandwidth total by figuring out how many units we have
-        self.bandwidth = int(
-            round(self.instance_type['memory_mb'] /
-                  CONF.ovz_memory_unit_size)) * CONF.ovz_tc_mbit_per_unit
+        # TODO(jcru) Ideally wish to move this to resources.py
+        # check under instance_type/flavor extra_specs to see if bandwidth has
+        # been predefined for flavor
+        extra_specs = self.instance_type.get("extra_specs", {})
+        self.bandwidth = self.instance_type.get("vz_bandwidth", None)
+        if not self.bandwidth:
+            LOG.debug(_('No (vz_bandwidth) extra_specs key/value defined for '
+                'flavor id (%s)') % self.instance_type['flavorid'])
+            # Calculate the bandwidth total by figuring out how many units we
+            # have
+            self.bandwidth = int(round(self.instance_type['memory_mb'] /
+                CONF.ovz_memory_unit_size)) * CONF.ovz_tc_mbit_per_unit
+        else:
+            int(self.bandwidth)
+
         LOG.debug(_('Allotted bandwidth: %s') % self.bandwidth)
+
         self.tc_id = self._get_instance_tc_id()
         if not self.tc_id:
             LOG.debug(_('No preassigned tc_id for %s, getting a new one') %
