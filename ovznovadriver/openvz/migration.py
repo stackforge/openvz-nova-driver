@@ -120,6 +120,9 @@ class OVZMigration(object):
                       self.container.ovz_id)
             self.untar_instance()
 
+        root_dir = os.path.join(CONF.ovz_ve_root_dir, self.container.ovz_id)
+        if os.path.exists(root_dir) is False:
+            ovz_utils.execute('mkdir', '-p', root_dir, run_as_root=True)
         # ensure we can interact with the new instance via its uuid
         self.container.save_ovz_metadata()
 
