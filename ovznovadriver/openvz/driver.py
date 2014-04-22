@@ -362,6 +362,13 @@ class OpenVzDriver(driver.ComputeDriver):
         self._set_vz_os_hint(container)
         self._configure_vz(container)
 
+        # instance.system_metadata will be saved by nova.compute.manager
+        # after this method returns (driver.spawn)
+        # ovz_utils.save_instance_metadata does not work because when this
+        # method returns nova.compute.manager calls instance.save and any
+        # info that was not updated through instance will be reverted
+        instance.system_metadata['ovz_id'] = container.ovz_id
+
         # TODO(imsplitbit): There's probably a better way to do this
         has_networking = False
         try:
@@ -1836,6 +1843,12 @@ class OpenVzDriver(driver.ComputeDriver):
         container = OvzContainer.find(uuid=instance['uuid'])
         # Some data gets lost in the migration, make sure ovz has current info
         container.save_ovz_metadata()
+        # instance.system_metadata will be saved by nova.compute.manager
+        # after this method returns (driver.finish_migration)
+        # ovz_utils.save_instance_metadata does not work because when this
+        # method returns nova.compute.manager calls instance.save and any
+        # info that was not updated through instance will be reverted
+        instance.system_metadata['ovz_id'] = container.ovz_id
 
     def _pymigrate_finish_migration(self, instance, network_info,
                                     live_migration):
@@ -1994,6 +2007,13 @@ class OpenVzDriver(driver.ComputeDriver):
             container, ovz_utils.generate_network_dict(
                 container, network_info), None, live_migration)
         mobj.cleanup_files()
+
+        # instance.system_metadata will be saved by nova.compute.manager
+        # after this method returns (driver.finish_revert_migration)
+        # ovz_utils.save_instance_metadata does not work because when this
+        # method returns nova.compute.manager calls instance.save and any
+        # info that was not updated through instance will be reverted
+        instance.system_metadata['ovz_id'] = container.ovz_id
 
     def get_host_ip_addr(self):
         """
