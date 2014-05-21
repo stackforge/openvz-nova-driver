@@ -27,6 +27,7 @@ from ovznovadriver.localization import _
 from ovznovadriver.openvz import utils as ovz_utils
 from ovznovadriver.openvz import volume as ovzvolume
 from oslo.config import cfg
+import time
 
 
 CONF = cfg.CONF
@@ -34,6 +35,11 @@ CONF.register_opt(
     cfg.IntOpt('ovz_iscsiadm_num_tries',
                default=1,
                help='Number of attempts to make an iscsi connection'))
+
+CONF.register_opt(
+    cfg.IntOpt('ovz_max_symlink_wait_time',
+                default=5,
+                help='Max time to wait for symlink resolution.'))
 
 LOG = logging.getLogger('ovznovadriver.openvz.volume_drivers.iscsi')
 
@@ -62,6 +68,19 @@ class OVZISCSIStorageDriver(ovzvolume.OVZVolume):
             (self.iscsi_properties['target_portal'],
              self.iscsi_properties['target_iqn'],
              self.iscsi_properties['target_lun'])
+
+    def _find_device(self):
+        idle_time = .1
+        total_wait_time = 0
+        while total_wait_time < CONF.ovz_max_symlink_wait_time:
+            path = super(OVZISCSIStorageDriver, self)._find_device()
+            if 'disk/by-path' not in path:
+                return path
+            time.sleep(idle_time)
+            total_wait_time += idle_time
+            idle_time *= 2
+            LOG.debug('Having trouble resolving %s. Trying Again.' % path)
+        raise IOError("Could not resolve symlink: %s" % path)
 
     def init_iscsi_device(self):
         """
