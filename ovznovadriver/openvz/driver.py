@@ -145,6 +145,9 @@ openvz_conn_opts = [
                 default={"8192": 3000, "1024": 2000, "4096": 2000,
                          "2048": 2000, "16384": 4000, "512": 2000},
                 help='Mapped values for flavors based on memory allocation'),
+    cfg.StrOpt('ovz_layout',
+                default='simfs',
+                help='OVZ layout options to use during create.'),
 ]
 
 CONF = cfg.CONF

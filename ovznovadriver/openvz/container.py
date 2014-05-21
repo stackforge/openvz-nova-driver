@@ -94,8 +94,14 @@ class OvzContainer(object):
 
         container = OvzContainer(ovz_id=cls.get_next_id(), **kwargs)
 
-        ovz_utils.execute('vzctl', 'create', container.ovz_id, '--ostemplate',
-                          image, run_as_root=True)
+        create_cmd = ['vzctl', 'create', container.ovz_id, '--ostemplate',
+                      image]
+
+        if CONF.ovz_layout:
+            create_cmd.append('--layout')
+            create_cmd.append(CONF.ovz_layout)
+
+        ovz_utils.execute(*create_cmd, run_as_root=True)
         container.save_ovz_metadata()
         return container
 
