@@ -63,6 +63,13 @@ class OVZISCSIStorageDriver(ovzvolume.OVZVolume):
              self.iscsi_properties['target_iqn'],
              self.iscsi_properties['target_lun'])
 
+    def _find_device(self):
+        path = super(OVZISCSIStorageDriver, self)._find_device()
+        while 'disk/by-path' in path:
+            LOG.debug('Having trouble resolving %s. Trying Again.' % path)
+            path = super(OVZISCSIStorageDriver, self)._find_device()
+        return path
+
     def init_iscsi_device(self):
         """
         Log into the device and setup files
