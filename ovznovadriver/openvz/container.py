@@ -14,6 +14,7 @@
 #    under the License.
 
 import json
+import os
 
 from nova import exception
 from nova.compute import flavors
@@ -112,9 +113,15 @@ class OvzContainer(object):
         """
         # openvz reserves ids 0-100, so start at 101
         id = 101
-        existing = OvzContainers.list(host=None)
-        if existing:
-            highest = int(existing[-1].ovz_id, base=10)
+        existing_containers = OvzContainers.list(host=None)
+        existing_container_ids = [int(cont.ovz_id, base=10) for cont in existing_containers]
+        # We wish to know all vz directories that currently exist
+        # since if a contianer is not running been deleted but for any
+        # reason
+        existing_directory_ids = map(int, OvzContainers.list_vz_directories())
+        all_existing_ids_set = set(existing_container_ids + existing_directory_ids)
+        if all_existing_ids_set:
+            highest = max(all_existing_ids_set)
             if highest > 100:
                 id = highest + 1
         return str(id)
@@ -513,6 +520,24 @@ class OvzContainers(object):
             results.append(OvzContainer._load_from_vzlist(line))
 
         return results
+
+    @classmethod
+    def list_vz_directories(cls):
+        """Lists VZ ids that have directories within:
+        '/etc/vz/private'
+        '/etc/vz/root
+        """
+        directories_to_check = ['/var/lib/vz/private/', '/var/lib/vz/root/']
+        vz_ids_set = set()
+        for directory_path in directories_to_check:
+            directories = [f
+                           for f in os.listdir(directory_path)
+                           if os.path.isdir(os.path.join(directory_path, f))
+                           and isinstance(f, int)]
+
+            vz_ids_set.update(directories)
+
+        return vz_ids_set
 
     @classmethod
     def get_memory_mb_used(cls, block_size=4096):
