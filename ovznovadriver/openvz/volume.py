@@ -292,7 +292,7 @@ class OVZVolume(object):
 
             # Remove the device if it happens to exist.  This prevents stale
             # devices with old major/minor numbers existing.
-            self._delete_device(device_name)
+            self._delete_container_device(device_name)
             self._mknod(maj_min['major'], maj_min['minor'], device_name)
 
         if bdevs:
@@ -431,7 +431,8 @@ class OVZVolume(object):
             if m and m.group('part'):
                 device_name = '%s%s' % (self.mountpoint, m.group('part'))
 
-            self._delete_device(device_name)
+            self._delete_container_device(device_name)
+            self._delete_device(dev)
 
         if bdevs_conf:
             self._del_block_devices(bdevs_conf, container_is_running)
@@ -474,6 +475,14 @@ class OVZVolume(object):
 
     def _delete_device(self, device):
         """
+        Utility method for deleting/removing device file
+
+        :param device
+        """
+        ovz_utils.execute('rm', '-f', device, run_as_root=True)
+
+    def _delete_container_device(self, device):
+        """
         Utility method for removing a device from inside the container.  This
         is to happen before you create a device because the existing device
         may or may not have the proper major/minor numbers.  This is obviously
@@ -485,4 +494,4 @@ class OVZVolume(object):
         device = '%s/%s/%s' % (
             CONF.ovz_ve_private_dir, self.instance_id, device)
         device = os.path.normpath(device)
-        ovz_utils.execute('rm', '-f', device, run_as_root=True)
+        self._delete_device(device)
