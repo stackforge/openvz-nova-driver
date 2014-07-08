@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import itertools
 import json
 import os
 
@@ -112,18 +113,14 @@ class OvzContainer(object):
         Gets the next available local openvz id.
         """
         # openvz reserves ids 0-100, so start at 101
-        id = 101
-        existing_containers = OvzContainers.list(host=None)
-        existing_container_ids = [int(cont.ovz_id, base=10) for cont in existing_containers]
         # We wish to know all vz directories that currently exist
         # since a container that has been deleted could have not
         # been completely cleaned up
-        existing_directory_ids = OvzContainers.list_vz_directories()
-        all_existing_ids_set = set(existing_container_ids + existing_directory_ids)
-        if all_existing_ids_set:
-            highest = max(all_existing_ids_set)
-            if highest > 100:
-                id = highest + 1
+        return max(itertools.chain(
+            (100,), # Default value
+            (int(cont.ovz_id, base=10) for cont in OvzContainers.list(host=None)),
+            OvzContainers.list_vz_directories(),
+        )) + 1
         return str(id)
 
     def save_ovz_metadata(self):
