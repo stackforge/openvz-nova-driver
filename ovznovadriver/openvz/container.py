@@ -116,11 +116,11 @@ class OvzContainer(object):
         # We wish to know all vz directories that currently exist
         # since a container that has been deleted could have not
         # been completely cleaned up
-        return max(itertools.chain(
+        return str(max(itertools.chain(
             (100,), # Default value
             (int(cont.ovz_id, base=10) for cont in OvzContainers.list(host=None)),
             OvzContainers.list_vz_directories(),
-        )) + 1
+        )) + 1)
 
     def save_ovz_metadata(self):
         """
