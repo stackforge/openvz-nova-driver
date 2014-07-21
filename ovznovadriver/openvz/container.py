@@ -18,7 +18,7 @@ import json
 import os
 
 from nova import exception
-from nova.compute import flavors
+from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
 from oslo.config import cfg
 from ovznovadriver.localization import _
@@ -108,6 +108,7 @@ class OvzContainer(object):
         return container
 
     @classmethod
+    @lockutils.synchronized('OVZ_DRIVER_GET_NEXT_ID')
     def get_next_id(cls):
         """
         Gets the next available local openvz id.
@@ -116,11 +117,18 @@ class OvzContainer(object):
         # We wish to know all vz directories that currently exist
         # since a container that has been deleted could have not
         # been completely cleaned up
-        return str(max(itertools.chain(
+        ovz_id = str(max(itertools.chain(
             (100,), # Default value
-            (int(cont.ovz_id, base=10) for cont in OvzContainers.list(host=None)),
+            (int(cont.ovz_id, base=10)
+             for cont in OvzContainers.list(host=None)),
             OvzContainers.list_vz_directories(),
         )) + 1)
+
+        # Create a lock dir to workaround a concurrency issue where multiple
+        # create calls can get the same next_id.
+        lock_dir = os.path.join(CONF.ovz_lock_dir, ovz_id)
+        ovz_utils.execute('mkdir', '-p', lock_dir, run_as_root=True)
+        return ovz_id
 
     def save_ovz_metadata(self):
         """
@@ -230,6 +238,14 @@ class OvzContainer(object):
         Remove the OpenVZ container this object represents.
         """
         ovz_utils.execute('vzctl', 'destroy', self.ovz_id, run_as_root=True)
+
+        # Clean up the folders if they get left behind.
+        root_dir = os.path.join(CONF.ovz_ve_root_dir, self.ovz_id)
+        private_dir = os.path.join(CONF.ovz_ve_private_dir, self.ovz_id)
+        lock_dir = os.path.join(CONF.ovz_lock_dir, self.ovz_id)
+        conf_dir = os.path.join(CONF.ovz_ve_conf_dir, self.ovz_id + '.*')
+        for pth in (root_dir, private_dir, lock_dir, conf_dir):
+            ovz_utils.execute('rm', '-rf', pth, run_as_root=True)
 
     def apply_config(self, config):
         """
@@ -529,7 +545,11 @@ class OvzContainers(object):
             except ValueError:
                 return False
 
-        directories_to_check = ['/var/lib/vz/private/', '/var/lib/vz/root/']
+        directories_to_check = (
+            CONF.ovz_ve_private_dir,
+            CONF.ovz_ve_root_dir,
+            CONF.ovz_lock_dir,
+        )
         vz_ids_set = set()
         for directory_path in directories_to_check:
             directories = [int(f)

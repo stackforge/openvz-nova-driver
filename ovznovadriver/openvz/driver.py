@@ -59,6 +59,12 @@ openvz_conn_opts = [
     cfg.StrOpt('ovz_ve_root_dir',
                default='/var/lib/vz/root',
                help='Path where the VEs root is'),
+    cfg.StrOpt('ovz_ve_conf_dir',
+               default='/etc/vz/conf',
+               help='Path where the VEs confs are'),
+    cfg.StrOpt('ovz_lock_dir',
+                default='/tmp/ovz_lock',
+                help='Path where file locks are placed.'),
     cfg.StrOpt('ovz_image_template_dir',
                default='/var/lib/vz/template/cache',
                help='Path where OpenVZ images are'),
@@ -170,6 +176,7 @@ class OpenVzDriver(driver.ComputeDriver):
         self.host = None
         self.read_only = read_only
         self.vif_driver = importutils.import_object(CONF.ovz_vif_driver)
+        ovz_utils.execute('mkdir', '-p', CONF.ovz_lock_dir, run_as_root=True)
         LOG.debug(_('__init__ complete in OpenVzDriver'))
 
     def init_host(self, host=socket.gethostname()):
