@@ -18,7 +18,7 @@ import json
 import os
 
 from nova import exception
-from nova.compute import flavors
+from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
 from oslo.config import cfg
 from ovznovadriver.localization import _
@@ -31,6 +31,15 @@ LOG = logging.getLogger(__name__)
 # More of the openvz logic belongs in here, but it was hard to de-tangle it
 # from all the libraries, so a minimal subset to get the desired outcome
 # was ported with the hope that future commits will further improve upon it
+
+def _is_int(value):
+
+    try:
+        int(value)
+        return True
+    except ValueError:
+        return False
+
 
 class OvzContainer(object):
     """
@@ -108,6 +117,7 @@ class OvzContainer(object):
         return container
 
     @classmethod
+    @lockutils.synchronized('OVZ_DRIVER_GET_NEXT_ID')
     def get_next_id(cls):
         """
         Gets the next available local openvz id.
@@ -116,11 +126,13 @@ class OvzContainer(object):
         # We wish to know all vz directories that currently exist
         # since a container that has been deleted could have not
         # been completely cleaned up
-        return str(max(itertools.chain(
-            (100,), # Default value
-            (int(cont.ovz_id, base=10) for cont in OvzContainers.list(host=None)),
-            OvzContainers.list_vz_directories(),
-        )) + 1)
+        ovz_id = str(max(OvzContainers.ctid_in_use()) + 1)
+
+        # Create a lock dir to workaround a concurrency issue where multiple
+        # create calls can get the same next_id.
+        lock_dir = os.path.join(CONF.ovz_lock_dir, ovz_id)
+        ovz_utils.execute('mkdir', '-p', lock_dir, run_as_root=True)
+        return ovz_id
 
     def save_ovz_metadata(self):
         """
@@ -230,6 +242,18 @@ class OvzContainer(object):
         Remove the OpenVZ container this object represents.
         """
         ovz_utils.execute('vzctl', 'destroy', self.ovz_id, run_as_root=True)
+
+        # Clean up the folders if they get left behind.
+        root_dir = os.path.join(CONF.ovz_ve_root_dir, self.ovz_id)
+        private_dir = os.path.join(CONF.ovz_ve_private_dir, self.ovz_id)
+        lock_dir = os.path.join(CONF.ovz_lock_dir, self.ovz_id)
+        confs = (
+            os.path.join(CONF.ovz_ve_conf_dir, f)
+            for f in os.listdir(CONF.ovz_ve_conf_dir)
+            if f.startswith(self.ovz_id + '.')
+        )
+        for pth in itertools.chain((root_dir, private_dir, lock_dir), confs):
+            ovz_utils.execute('rm', '-rf', pth, run_as_root=True)
 
     def apply_config(self, config):
         """
@@ -518,27 +542,58 @@ class OvzContainers(object):
         return results
 
     @classmethod
-    def list_vz_directories(cls):
-        """Lists container ids that have directories within vz directories
+    def ctid_in_use(cls):
+        """Get an iterable of all CTIDs currently in use on the system."""
+
+        return itertools.chain(
+            xrange(100),  # Reserved by OpenVZ.
+            (int(cont.ovz_id, base=10)
+             for cont in OvzContainers.list(host=None)),
+            OvzContainers.list_vz_artifacts(),
+        )
+
+    @classmethod
+    def _artifacts_from_dirs(cls):
+        """Generate container ids that have artifacts in vz directories.
+
+        Directories in the searched directories are named with the CTID of the
+        container they represent. Generate a list of all CTIDs in use by
+        looking in these directories. This accounts for containers that are
+        deleted but still leave behind certain directories.
         """
-        # we only care for vz container id (int) directories
-        def is_int(name):
-            try:
-                int(name)
-                return True
-            except ValueError:
-                return False
 
-        directories_to_check = ['/var/lib/vz/private/', '/var/lib/vz/root/']
-        vz_ids_set = set()
-        for directory_path in directories_to_check:
-            directories = [int(f)
-                           for f in os.listdir(directory_path)
-                           if os.path.isdir(os.path.join(directory_path, f))
-                           and is_int(f)]
-            vz_ids_set.update(directories)
+        directories_to_check = (
+            CONF.ovz_ve_private_dir,
+            CONF.ovz_ve_root_dir,
+            CONF.ovz_lock_dir,
+        )
+        for dir_path in directories_to_check:
+            for item in os.listdir(dir_path):
+                item_path = os.path.join(dir_path, item)
+                if os.path.isdir(item_path) and _is_int(item):
+                    yield int(item)
 
-        return vz_ids_set
+    @classmethod
+    def _artifacts_from_confs(cls):
+        """Generate container ids that have artifacts in the vz configs.
+
+        Each container also comes with a series of config files. Each file is
+        named in the pattern <CTID>.<CONFIG>. Generate a list of CTIDs based on
+        the config files that are present. This accounts for containers that
+        were deleted but left behind their config files.
+        """
+        for item in os.listdir(CONF.ovz_ve_conf_dir):
+            if '.' in item and _is_int(item.split('.')[0]):
+                yield int(item.split('.')[0])
+
+    @classmethod
+    def list_vz_artifacts(cls):
+        """Lists container ids that have artifacts within vz directories
+        """
+        return itertools.chain(
+            OvzContainers._artifacts_from_dirs(),
+            OvzContainers._artifacts_from_confs(),
+        )
 
     @classmethod
     def get_memory_mb_used(cls, block_size=4096):
