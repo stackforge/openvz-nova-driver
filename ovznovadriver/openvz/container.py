@@ -18,7 +18,7 @@ import json
 import os
 
 from nova import exception
-from nova.compute import flavors
+from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
 from oslo.config import cfg
 from ovznovadriver.localization import _
@@ -108,6 +108,7 @@ class OvzContainer(object):
         return container
 
     @classmethod
+    @lockutils.synchronized('OVZ_DRIVER_GET_NEXT_ID')
     def get_next_id(cls):
         """
         Gets the next available local openvz id.
@@ -116,11 +117,13 @@ class OvzContainer(object):
         # We wish to know all vz directories that currently exist
         # since a container that has been deleted could have not
         # been completely cleaned up
-        return str(max(itertools.chain(
-            (100,), # Default value
-            (int(cont.ovz_id, base=10) for cont in OvzContainers.list(host=None)),
-            OvzContainers.list_vz_directories(),
-        )) + 1)
+        ovz_id = str(max(OvzContainers.ctid_in_use()) + 1)
+
+        # Create a lock dir to workaround a concurrency issue where multiple
+        # create calls can get the same next_id.
+        lock_dir = os.path.join(CONF.ovz_lock_dir, ovz_id)
+        ovz_utils.execute('mkdir', '-p', lock_dir, run_as_root=True)
+        return ovz_id
 
     def save_ovz_metadata(self):
         """
@@ -230,6 +233,18 @@ class OvzContainer(object):
         Remove the OpenVZ container this object represents.
         """
         ovz_utils.execute('vzctl', 'destroy', self.ovz_id, run_as_root=True)
+
+        # Clean up the folders if they get left behind.
+        root_dir = os.path.join(CONF.ovz_ve_root_dir, self.ovz_id)
+        private_dir = os.path.join(CONF.ovz_ve_private_dir, self.ovz_id)
+        lock_dir = os.path.join(CONF.ovz_lock_dir, self.ovz_id)
+        confs = (
+            os.path.join(CONF.ovz_ve_conf_dir, f)
+            for f in os.listdir(CONF.ovz_ve_conf_dir)
+            if f.startswith(self.ovz_id + '.')
+        )
+        for pth in itertools.chain((root_dir, private_dir, lock_dir), confs):
+            ovz_utils.execute('rm', '-rf', pth, run_as_root=True)
 
     def apply_config(self, config):
         """
@@ -518,8 +533,19 @@ class OvzContainers(object):
         return results
 
     @classmethod
-    def list_vz_directories(cls):
-        """Lists container ids that have directories within vz directories
+    def ctid_in_use(cls):
+        """Get an iterable of all CTIDs currently in use on the system."""
+
+        return itertools.chain(
+            xrange(100),  # Reserved by OpenVZ.
+            (int(cont.ovz_id, base=10)
+             for cont in OvzContainers.list(host=None)),
+            OvzContainers.list_vz_artifacts(),
+        )
+
+    @classmethod
+    def list_vz_artifacts(cls):
+        """Lists container ids that have artifacts within vz directories
         """
         # we only care for vz container id (int) directories
         def is_int(name):
@@ -529,16 +555,22 @@ class OvzContainers(object):
             except ValueError:
                 return False
 
-        directories_to_check = ['/var/lib/vz/private/', '/var/lib/vz/root/']
-        vz_ids_set = set()
-        for directory_path in directories_to_check:
-            directories = [int(f)
-                           for f in os.listdir(directory_path)
-                           if os.path.isdir(os.path.join(directory_path, f))
-                           and is_int(f)]
-            vz_ids_set.update(directories)
+        directories_to_check = (
+            CONF.ovz_ve_private_dir,
+            CONF.ovz_ve_root_dir,
+            CONF.ovz_lock_dir,
+        )
+        ctids = itertools.chain(
+            (int(f)
+            for dir_pth in directories_to_check
+            for f in os.listdir(dir_pth)
+            if os.path.isdir(os.path.join(dir_pth, f)) and is_int(f)),
+            (int(f.split('.')[0])
+            for f in os.listdir(CONF.ovz_ve_conf_dir)
+            if '.' in f and is_int(f.split('.')[0])),
+        )
 
-        return vz_ids_set
+        return ctids
 
     @classmethod
     def get_memory_mb_used(cls, block_size=4096):
