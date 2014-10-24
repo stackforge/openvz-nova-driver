@@ -124,7 +124,7 @@ class OVZVolume(object):
                 LOG.debug(_('Matched device %(device)s') % locals())
                 devs.append(m.string)
 
-        LOG.debug(_('Devices: %(devs)s') % locals())
+        LOG.info(_('Devices: %(devs)s') % locals())
         return devs
 
     def _get_major_minor(self, device):
@@ -133,7 +133,7 @@ class OVZVolume(object):
             maj_min = dict()
             maj_min['major'] = os.major(dev.st_rdev)
             maj_min['minor'] = os.minor(dev.st_rdev)
-            LOG.debug(
+            LOG.info(
                 _('Major Minor numbers for %(dev)s: %(maj_min)s') % locals())
             return maj_min
 
@@ -192,7 +192,7 @@ class OVZVolume(object):
                         part_table[dev]['flags'] = line[3]
                         LOG.debug(_('Disk flags exist for %(dev)s') % locals())
 
-            LOG.debug(_('Partition Table: %(part_table)s') % locals())
+            LOG.info(_('Partition Table: %(part_table)s') % locals())
             return part_table
 
         except exception.InstanceUnacceptable as err:
@@ -406,7 +406,7 @@ class OVZVolume(object):
 
         :return:
         """
-        LOG.debug(_('Detaching raw devices'))
+        LOG.info(_('Detaching raw devices'))
 
         # storage for block device major/minor pairs for setting in
         # the container config file.

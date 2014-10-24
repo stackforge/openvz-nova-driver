@@ -41,5 +41,5 @@ class OVZShutdownFile(ovzfile.OVZFile):
         LOG.debug(_('Beginning OVZShutdownFile'))
         filename = "%s/%s.shutdown" % (CONF.ovz_config_dir, instance_id)
         filename = os.path.abspath(filename)
-        LOG.debug(_('OVZShutdownFile: %s') % filename)
+        LOG.info(_('OVZShutdownFile: %s') % filename)
         super(OVZShutdownFile, self).__init__(filename, permissions)

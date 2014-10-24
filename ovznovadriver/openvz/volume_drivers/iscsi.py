@@ -139,11 +139,11 @@ class OVZISCSIStorageDriver(ovzvolume.OVZVolume):
 
         try:
             if not self.session_currently_connected(check_exit_code=[0, 21]):
-                LOG.debug(_('iSCSI session for %s not connected, '
+                LOG.info(_('iSCSI session for %s not connected, '
                             'connecting now') %
                           self.iscsi_properties['target_iqn'])
                 self._run_iscsiadm(("--login",))
-                LOG.debug(_('iSCSI session for %s connected') %
+                LOG.info(_('iSCSI session for %s connected') %
                           self.iscsi_properties['target_iqn'])
         except processutils.ProcessExecutionError as err:
             if "15 - already exists" in err.message:

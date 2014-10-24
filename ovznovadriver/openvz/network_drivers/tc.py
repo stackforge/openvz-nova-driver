@@ -84,7 +84,7 @@ class OVZTcRules(object):
                 admin_context, instance_id)
             self.instance_type = self.conductor.instance_type_get(
                 admin_context, self.instance['instance_type_id'])
-        LOG.debug(_('CT TC address: %s') % address)
+        LOG.info(_('CT TC address: %s') % address)
 
         self.address = address
         self.vz_iface = vz_iface
@@ -95,7 +95,7 @@ class OVZTcRules(object):
         extra_specs = self.instance_type.get("extra_specs", {})
         self.bandwidth = extra_specs.get("vz_bandwidth", None)
         if not self.bandwidth:
-            LOG.debug(_('No (vz_bandwidth) extra_specs key/value defined for '
+            LOG.info(_('No (vz_bandwidth) extra_specs key/value defined for '
                 'flavor id (%s)') % self.instance_type['flavorid'])
             # Calculate the bandwidth total by figuring out how many units we
             # have
@@ -104,7 +104,7 @@ class OVZTcRules(object):
         else:
             int(self.bandwidth)
 
-        LOG.debug(_('Allotted bandwidth: %s') % self.bandwidth)
+        LOG.info(_('Allotted bandwidth: %s') % self.bandwidth)
 
         self.tc_id = self._get_instance_tc_id()
         if not self.tc_id:
@@ -130,7 +130,7 @@ class OVZTcRules(object):
             LOG.debug(_('TC id %s inflight already, pulling another') % tc_id)
             tc_id = self._pull_id()
             LOG.debug(_('TC id %s pulled, testing for dupe') % tc_id)
-        LOG.debug(_('TC id %s pulled, verified unique') % tc_id)
+        LOG.info(_('TC id %s pulled, verified unique') % tc_id)
         self._reserve_id(tc_id)
         return tc_id
 
@@ -244,9 +244,9 @@ class OVZTcRules(object):
         """
         LOG.debug(_('Beginning reservation process'))
         OVZTcRules._ovz_tc_inflight_ids.append(tc_id)
-        LOG.debug(_('Added id "%s" to _ovz_tc_inflight_ids') % tc_id)
+        LOG.info(_('Added id "%s" to _ovz_tc_inflight_ids') % tc_id)
         OVZTcRules._ovz_tc_available_ids.remove(tc_id)
-        LOG.debug(_('Removed id "%s" from _ovz_tc_available_ids') % tc_id)
+        LOG.info(_('Removed id "%s" from _ovz_tc_available_ids') % tc_id)
 
     def _remove_used_ids(self):
         """

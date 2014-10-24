@@ -210,7 +210,7 @@ class OvzContainer(object):
             raise exception.InstanceNotFound(
                 _('Instance %s does not exist') % str(params))
 
-        LOG.debug(_('Loading container from vzlist %(params)s: %(ovz_data)s') %
+        LOG.info(_('Loading container from vzlist %(params)s: %(ovz_data)s') %
             {'params': params, 'ovz_data': found.ovz_data})
 
         return found

@@ -56,8 +56,8 @@ class OVZMigrationRsyncTransport(transport.OVZMigrationTransport):
                              os.path.abspath(dest_path))
         counter = 1
         while counter <= CONF.ovz_rsync_iterations:
-            LOG.debug(_('RSyncing %(src_path)s, attempt: %(counter)s') %
-                      locals())
+            LOG.info(_('RSyncing %(src_path)s, attempt: %(counter)s') %
+                     locals())
             ovz_utils.execute('rsync',
                               '-qavz',
                               src_path,

@@ -88,7 +88,7 @@ class OVZExtStorage(object):
         """
         try:
             self._volumes.pop(device)
-            LOG.debug(
+            LOG.info(
                 _('Removed volume %(device)s from instance %(instance_id)s') %
                 {'device': device, 'instance_id': self.instance_id})
         except KeyError:

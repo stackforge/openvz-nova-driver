@@ -297,7 +297,7 @@ class VZResourceManager(object):
             utility_cpus = self.utility['CPULIMIT'] / 100
 
             if vcpus > utility_cpus:
-                LOG.debug(
+                LOG.warning(
                     _('OpenVZ thinks vcpus "%(vcpus)s" '
                       'is greater than "%(utility_cpus)s"') % locals())
                 # We can't set cpus higher than the number of actual logical cores
@@ -353,13 +353,13 @@ class VZResourceManager(object):
         Utility method to generate tc info for instances that have been
         resized and/or migrated
         """
-        LOG.debug(_('Setting network sizing'))
+        LOG.info(_('Setting network sizing'))
         boot_file = ovzboot.OVZBootFile(container.ovz_id, 755)
         shutdown_file = ovzshutdown.OVZShutdownFile(container.ovz_id, 755)
 
         if not is_migration:
             with shutdown_file:
-                LOG.debug(_('Cleaning TC rules for %s') % container.nova_id)
+                LOG.info(_('Cleaning TC rules for %s') % container.nova_id)
                 shutdown_file.read()
                 shutdown_file.run_contents(raise_on_error=False)
 
@@ -381,7 +381,7 @@ class VZResourceManager(object):
         interfaces = ovz_utils.generate_network_dict(container,
                                                      network_info)
         for net_dev in interfaces:
-            LOG.debug(_('Adding tc rules for: %s') %
+            LOG.info(_('Adding tc rules for: %s') %
                       net_dev['vz_host_if'])
             tc = ovztc.OVZTcRules()
             tc.instance_info(container.nova_id, net_dev['address'],
@@ -396,9 +396,9 @@ class VZResourceManager(object):
             if not is_migration:
                 # during migration, the instance isn't yet running, so it'll
                 # just spew errors to attempt to apply these rules before then
-                LOG.debug(_('Running TC rules for: %s') % container.ovz_id)
+                LOG.info(_('Running TC rules for: %s') % container.ovz_id)
                 boot_file.run_contents()
-            LOG.debug(_('Saving TC rules for: %s') % container.ovz_id)
+            LOG.info(_('Saving TC rules for: %s') % container.ovz_id)
             boot_file.write()
 
         with shutdown_file:

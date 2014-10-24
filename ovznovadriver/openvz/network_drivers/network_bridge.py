@@ -39,7 +39,7 @@ class OVZNetworkBridgeDriver(object):
         if (not vif['network'].get_meta('should_create_bridge', False) and
                 vif['network'].get_meta('should_create_vlan', False)):
             if vif['network'].get_meta('should_create_vlan', False):
-                LOG.debug(_('Ensuring bridge %(bridge)s and vlan %(vlan)s') %
+                LOG.info(_('Ensuring bridge %(bridge)s and vlan %(vlan)s') %
                           {'bridge': vif['network']['bridge'],
                            'vlan': vif['network'].get_meta('vlan')})
                 linux_net.LinuxBridgeInterfaceDriver.ensure_vlan_bridge(
@@ -47,7 +47,7 @@ class OVZNetworkBridgeDriver(object):
                     vif['network']['bridge'],
                     vif['network'].get_meta('bridge_interface'))
             else:
-                LOG.debug(_('Ensuring bridge %s') % vif['network']['bridge'])
+                LOG.info(_('Ensuring bridge %s') % vif['network']['bridge'])
                 linux_net.LinuxBridgeInterfaceDriver.ensure_bridge(
                     vif['network']['bridge'],
                     vif['network'].get_meta('bridge_interface'))

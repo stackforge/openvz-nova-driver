@@ -129,12 +129,12 @@ class OVZNetworkInterfaces(object):
             for net_dev in self.interface_info:
                 path = prefix + redhat_path + ('ifcfg-%s' % net_dev['name'])
                 path = os.path.abspath(path)
-                LOG.debug(_('Generated filename %(path)s') % locals())
+                LOG.info(_('Generated filename %(path)s') % locals())
                 yield path
         elif variant == 'debian':
             path = prefix + debian_path
             path = os.path.abspath(path)
-            LOG.debug(_('Generated filename %(path)s') % locals())
+            LOG.info(_('Generated filename %(path)s') % locals())
             yield path
         else:
             raise exception.InvalidMetadata(
@@ -198,4 +198,3 @@ class OVZNetworkFile(ovzfile.OVZFile):
 
     def __init__(self, filename):
         super(OVZNetworkFile, self).__init__(filename, 644)
-

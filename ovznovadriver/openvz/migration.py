@@ -79,22 +79,22 @@ class OVZMigration(object):
         if self.live_migration:
             # this is a live migration so dump current memory and network
             # state.
-            LOG.debug(_('Making container backup for %s') %
+            LOG.info(_('Making container backup for %s') %
                       self.container.ovz_id)
             self.dump()
         else:
-            LOG.debug(_('Archiving container to tar: %s') %
+            LOG.info(_('Archiving container to tar: %s') %
                       self.container.ovz_id)
             self.tar_instance()
 
         # Take all instance scripts from /etc/vz/conf and put them in a
         # tarball for transfer.
-        LOG.debug(_('Making action script backups for %s') %
+        LOG.info(_('Making action script backups for %s') %
                   self.container.ovz_id)
         self.backup_action_scripts()
-        LOG.debug(_('Archiving misc files: %s') % self.container.ovz_id)
+        LOG.info(_('Archiving misc files: %s') % self.container.ovz_id)
         self.tar_dumpdir()
-        LOG.debug(_('Migration image created'))
+        LOG.info(_('Migration image created'))
 
     def undump_instance(self):
         """
@@ -102,21 +102,21 @@ class OVZMigration(object):
         """
         # If a non-root user was used to transfer the files then we
         # need to move everything to where it is expected to be.
-        LOG.debug(_('Restoring action scripts from archive: %s') %
+        LOG.info(_('Restoring action scripts from archive: %s') %
                   self.dumpdir_tarfile)
         self.untar_dumpdir()
-        LOG.debug(_('Restoring action scripts for %s') % self.container.ovz_id)
+        LOG.info(_('Restoring action scripts for %s') % self.container.ovz_id)
         self.restore_action_scripts()
 
         if self.live_migration:
-            LOG.debug(_('Restoring container state from dump for %s') %
+            LOG.info(_('Restoring container state from dump for %s') %
                       self.container.ovz_id)
             self.undump()
 
-            LOG.debug(_('Resuming container: %s') % self.container.ovz_id)
+            LOG.info(_('Resuming container: %s') % self.container.ovz_id)
             self.resume()
         else:
-            LOG.debug(_('Restoring container from tar: %s') %
+            LOG.info(_('Restoring container from tar: %s') %
                       self.container.ovz_id)
             self.untar_instance()
 
@@ -164,7 +164,7 @@ class OVZMigration(object):
         ovz_utils.execute('vzctl', 'chkpnt', self.container.ovz_id,
                           '--dump', '--dumpfile', self.dumpfile,
                           run_as_root=True)
-        LOG.debug(_('Dumped instance %(instance_id)s to %(dumpfile)s') %
+        LOG.info(_('Dumped instance %(instance_id)s to %(dumpfile)s') %
                   {'instance_id': self.container.ovz_id,
                    'dumpfile': self.dumpfile})
 
@@ -176,7 +176,7 @@ class OVZMigration(object):
         ovz_utils.execute('vzctl', 'restore', self.container.ovz_id, '--undump',
                           '--dumpfile', self.dumpfile, '--skip_arpdetect',
                           run_as_root=True)
-        LOG.debug(_('Undumped instance %(instance_id)s from %(dumpfile)s') %
+        LOG.info(_('Undumped instance %(instance_id)s from %(dumpfile)s') %
                   {'instance_id': self.container.ovz_id,
                    'dumpfile': self.dumpfile})
 
@@ -187,7 +187,7 @@ class OVZMigration(object):
         LOG.debug(_('Resuming instance %s') % self.container.ovz_id)
         ovz_utils.execute('vzctl', 'restore', self.container.ovz_id,
                           '--resume', run_as_root=True)
-        LOG.debug(_('Resumed instance %s') % self.container.ovz_id)
+        LOG.info(_('Resumed instance %s') % self.container.ovz_id)
 
     def kill(self):
         """
@@ -197,7 +197,7 @@ class OVZMigration(object):
         LOG.debug(_('Killing instance %s') % self.container.ovz_id)
         ovz_utils.execute('vzctl', 'chkpnt', self.container.ovz_id,
                           '--kill', run_as_root=True)
-        LOG.debug(_('Killed instance %s') % self.container.ovz_id)
+        LOG.info(_('Killed instance %s') % self.container.ovz_id)
 
     def quotadump(self):
         """
@@ -206,7 +206,7 @@ class OVZMigration(object):
         LOG.debug(_('Dumping quotas for %s') % self.container.ovz_id)
         ovz_utils.execute('vzdqdump', self.container.ovz_id, '-U', '-G',
                           '-T', '>', self.qdumpfile, run_as_root=True)
-        LOG.debug(_('Dumped quotas for %s') % self.container.ovz_id)
+        LOG.info(_('Dumped quotas for %s') % self.container.ovz_id)
 
     def quotaload(self):
         """
@@ -215,7 +215,7 @@ class OVZMigration(object):
         LOG.debug(_('Loading quotas for %s') % self.container.ovz_id)
         ovz_utils.execute('vzdqload', self.container.ovz_id, '-U', '-G', '-T',
                           '<', self.qdumpfile, run_as_root=True)
-        LOG.debug(_('Loaded quotas for %s') % self.container.ovz_id)
+        LOG.info(_('Loaded quotas for %s') % self.container.ovz_id)
 
     def quotaenable(self):
         """
@@ -224,7 +224,7 @@ class OVZMigration(object):
         LOG.debug(_('Enabling quotas for %s') % self.container.ovz_id)
         ovz_utils.execute('vzquota', 'reload2',
                           self.container.ovz_id, run_as_root=True)
-        LOG.debug(_('Enabled quotas for %s') % self.container.ovz_id)
+        LOG.info(_('Enabled quotas for %s') % self.container.ovz_id)
 
     def quota_init(self):
         """
@@ -232,7 +232,7 @@ class OVZMigration(object):
         """
         LOG.debug(_('Initializing quotas for %s') % self.container.ovz_id)
         ovz_utils.execute('vzctl', 'quotainit', self.container.ovz_id)
-        LOG.debug(_('Initialized quotas for %s') % self.container.ovz_id)
+        LOG.info(_('Initialized quotas for %s') % self.container.ovz_id)
 
     def quota_on(self):
         """
@@ -241,7 +241,7 @@ class OVZMigration(object):
         LOG.debug(_('Turning on quotas for %s') % self.container.ovz_id)
         ovz_utils.execute('vzctl', 'quotaon', self.container.ovz_id,
                           run_as_root=True)
-        LOG.debug(_('Turned on quotas for %s') % self.container.ovz_id)
+        LOG.info(_('Turned on quotas for %s') % self.container.ovz_id)
 
     def backup_action_scripts(self):
         """
@@ -258,7 +258,7 @@ class OVZMigration(object):
                     '%s/%s.%s' % (self.as_dumpdir, self.container.uuid,
                                   a_script))
                 ovz_utils.copy(a_script_src, a_script_dest)
-                LOG.debug(_('Copied actionscript: %(src)s as %(dest)s')
+                LOG.info(_('Copied actionscript: %(src)s as %(dest)s')
                           % { 'src': a_script_src, 'dest': a_script_dest })
         LOG.debug(_('Copied actionscripts into place'))
 
@@ -277,7 +277,7 @@ class OVZMigration(object):
                     '%s/%s.%s' % (CONF.ovz_config_dir, self.container.ovz_id,
                                   a_script))
                 ovz_utils.copy(a_script_src, a_script_dest)
-                LOG.debug(_('Restored actionscript: %(src)s as %(dest)s')
+                LOG.info(_('Restored actionscript: %(src)s as %(dest)s')
                           % { 'src': a_script_src, 'dest': a_script_dest })
         LOG.debug(_('Restored actionscripts into place'))
 
@@ -318,7 +318,7 @@ class OVZMigration(object):
         if self.instance_tarfile:
             ovz_utils.execute('rm', '-f', self.instance_tarfile,
                               run_as_root=True)
-        LOG.debug(
+        LOG.info(
             _('Cleaned up migration files for %s') % self.container.ovz_id)
 
     def tar_instance(self):
@@ -336,7 +336,7 @@ class OVZMigration(object):
         ovz_utils.tar(self.container.ovz_id, self.instance_tarfile,
                       working_dir=self.instance_parent,
                       extra=['--transform', sed_regex])
-        LOG.debug(_('Tarred up instance: %s') % self.container.ovz_id)
+        LOG.info(_('Tarred up instance: %s') % self.container.ovz_id)
 
     def tar_dumpdir(self):
         """
@@ -345,14 +345,14 @@ class OVZMigration(object):
         LOG.debug(_('Tarring up instance dumpdir: %s') % self.dumpdir)
         ovz_utils.tar(self.dumpdir_name, self.dumpdir_tarfile,
                       self.dumpdir_parent)
-        LOG.debug(_('Tarred up instance dumpdir: %s') % self.dumpdir)
+        LOG.info(_('Tarred up instance dumpdir: %s') % self.dumpdir)
 
     def untar_instance(self):
         """
         Expand the tarball from the instance and expand it into place
         """
-        LOG.debug(_('Untarring instance: %s') % self.instance_tarfile)
-        LOG.debug(_('Make sure directory exists: %s') % self.instance_source)
+        LOG.info(_('Untarring instance: %s') % self.instance_tarfile)
+        LOG.info(_('Make sure directory exists: %s') % self.instance_source)
         ovz_utils.make_dir(self.instance_source)
 
         sed_regex = 's/%(uuid)s/%(ctid)s/' % {
@@ -369,7 +369,7 @@ class OVZMigration(object):
         """
         LOG.debug(_('Untarring instance dumpdir: %s') % self.dumpdir)
         ovz_utils.untar(self.dumpdir_tarfile, self.dumpdir_parent)
-        LOG.debug(_('Untarred instance dumpdir: %s') % self.dumpdir)
+        LOG.info(_('Untarred instance dumpdir: %s') % self.dumpdir)
 
     def _setup_transport(self, src_path, dest_path, skip_list=None):
         if CONF.ovz_migration_transport == 'rsync':
