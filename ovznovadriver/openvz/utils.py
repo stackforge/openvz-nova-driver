@@ -56,7 +56,7 @@ def execute(*cmd, **kwargs):
             LOG.debug(_('Stdout from %(command)s: %(out)s') %
                       {'command': cmd[0], 'out': out})
         if err:
-            LOG.debug(_('Stderr from %(command)s: %(out)s') %
+            LOG.error(_('Stderr from %(command)s: %(out)s') %
                       {'command': cmd[0], 'out': err})
         return out
     except processutils.ProcessExecutionError as err:
@@ -99,7 +99,7 @@ def get_fs_uuid(device):
     Because we may need to operate on a volume by it's uuid
     we need a way to see if a filesystem has a uuid on it
     """
-    LOG.debug(_('Getting FS UUID for: %s') % device)
+    LOG.info(_('Getting FS UUID for: %s') % device)
     out = execute('blkid', '-o', 'value', '-s', 'UUID', device,
                   run_as_root=True, raise_on_error=False)
     if out:
@@ -111,7 +111,7 @@ def get_fs_uuid(device):
                 '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}',
                 line)
             if result:
-                LOG.debug(
+                LOG.info(
                     _('Found the FS UUID for: %(device)s It is: %(uuid)s') %
                     {'device': device, 'uuid': result.group(0)})
                 return result.group(0)
@@ -391,7 +391,7 @@ def save_instance_metadata(instance_id, key, value, fail_on_dupe_key=False):
     :param key: Key to save to db
     :param value: Value of key to save to db
     """
-    LOG.debug(
+    LOG.info(
         _('Beginning saving instance metadata for '
           '%(instance_id)s: {%(key)s: %(value)s}') % locals())
     admin_context = context.get_admin_context()
@@ -427,7 +427,7 @@ def read_instance_metadata(instance_id):
     try:
         instance = conductor.instance_get(admin_context, instance_id)
         LOG.debug(_('Fetched instance'))
-        LOG.debug(
+        LOG.info(
             _('Results from read_instance_metadata: %s') %
             instance['system_metadata'])
         return format_system_metadata(instance['system_metadata'])
@@ -483,10 +483,10 @@ def remove_instance_metadata(instance_id):
     openvz_metadata_keys = ('tc_id','migration_type')
     try:
         for key in openvz_metadata_keys:
-            LOG.debug(_('Removing metadata key: %s') % key)
+            LOG.info(_('Removing metadata key: %s') % key)
             remove_instance_metadata_key(instance_id, key)
 
-        LOG.debug(_('Deleted metadata for %(instance_id)s') % locals())
+        LOG.info(_('Deleted metadata for %(instance_id)s') % locals())
         return True
     except exception.InstanceNotFound as err:
         LOG.error(_('Instance not in the database: %s') % instance_id)

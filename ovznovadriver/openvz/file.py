@@ -78,8 +78,7 @@ class OVZFile(object):
         process, this is a method used to dump the contents of self.contents
         back into the file that this object represents.
         """
-        LOG.debug(_('File contents before write: %s') %
-                  '\n'.join(self.contents))
+        LOG.info(_('Writing file: %s') % self.filename)
         try:
             with open(self.filename, 'w') as fh:
                 fh.writelines('\n'.join(self.contents) + '\n')
@@ -120,7 +119,6 @@ class OVZFile(object):
         if not isinstance(contents, list):
             contents = [str(contents)]
         self.contents += contents
-        LOG.debug(_('File contents: %s') % self.contents)
 
     def prepend(self, contents):
         """
@@ -129,7 +127,6 @@ class OVZFile(object):
         if not isinstance(contents, list):
             contents = [str(contents)]
         self.contents = contents + self.contents
-        LOG.debug(_('File contents: %s') % self.contents)
 
     def delete(self, contents):
         """
@@ -190,7 +187,6 @@ class OVZFile(object):
         if isinstance(new_contents, str):
             LOG.debug(_('Type of new_contents is: str'))
             self.contents = new_contents.split('\n')
-            LOG.debug(_('Contents of file: %s') % self.contents)
         elif isinstance(new_contents, list):
             LOG.debug(_('Type of new_contents is: list'))
             self.contents = new_contents

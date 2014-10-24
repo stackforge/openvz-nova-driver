@@ -747,12 +747,10 @@ class OpenVzDriver(driver.ComputeDriver):
                                 [['filename', 'file_contents']] only strings
                                 are accepted.
         """
-        LOG.debug(
-            _('Files to inject into %(instance_id)s: %(files_to_inject)s') %
-            {'instance_id': instance['id'],
-             'files_to_inject': files_to_inject})
         for file_to_inject in files_to_inject:
-            LOG.debug(_('Injecting file: %s') % file_to_inject[0])
+            LOG.info(
+                _('Injecting file: %(instance_id)s: %(file)s') %
+                {'instance_id': instance['id'], 'file': file_to_inject[0]})
             self.inject_file(instance,
                              base64.b64encode(file_to_inject[0]),
                              base64.b64encode(file_to_inject[1]))
@@ -887,7 +885,7 @@ class OpenVzDriver(driver.ComputeDriver):
                         _('I refuse to operate on /'))
 
                 filename = '%s/%s' % (CONF.ovz_config_dir, filename)
-                LOG.debug(_('Deleting file: %s') % filename)
+                LOG.info(_('Deleting file: %s') % filename)
                 ovz_utils.execute(
                     'rm', '-f', filename, run_as_root=True,
                     raise_on_error=False)
@@ -927,9 +925,9 @@ class OpenVzDriver(driver.ComputeDriver):
         # it's safe to just delete all of it because if it's there we put
         # it there.
         if ovz_utils.remove_instance_metadata(instance['id']):
-            LOG.debug(_('Removed metadata for instance %s') % instance['id'])
+            LOG.info(_('Removed metadata for instance %s') % instance['id'])
         else:
-            LOG.debug(_('Problem removing metadata for instance %s') %
+            LOG.error(_('Problem removing metadata for instance %s') %
                       instance['id'])
 
         # remove all attached volumes
@@ -943,14 +941,14 @@ class OpenVzDriver(driver.ComputeDriver):
             try:
                 LOG.debug(_('Beginning _wait_for_destroy'))
                 state = self.get_info(instance)['state']
-                LOG.debug(_('State is %s') % state)
+                LOG.info(_('State is %s') % state)
 
                 if state is power_state.RUNNING:
-                    LOG.debug(_('Ve is running, stopping now.'))
+                    LOG.info(_('Ve is running, stopping now.'))
                     self._stop(instance)
                     LOG.debug(_('Ve stopped'))
 
-                LOG.debug(_('Attempting to destroy container'))
+                LOG.info(_('Attempting to destroy container'))
                 self._destroy(instance['id'])
             except exception.InstanceUnacceptable as err:
                 LOG.error(_('There was an error with the destroy process'))
@@ -960,7 +958,7 @@ class OpenVzDriver(driver.ComputeDriver):
                 raise exception.InstanceTerminationFailure(
                     _('Error running vzctl destroy'))
             except exception.InstanceNotFound:
-                LOG.debug(_('Container not found, destroyed?'))
+                LOG.warn(_('Container not found, destroyed?'))
                 timer.stop()
                 LOG.debug(_('Timer stopped for _wait_for_destroy'))
 
@@ -1109,8 +1107,8 @@ class OpenVzDriver(driver.ComputeDriver):
         # Coerced into an INT because it comes from SQLAlchemy as a string
         state = int(instance['power_state'])
 
-        LOG.debug(_('Instance %(uuid)s is in state %(power_state)s') %
-                  {'uuid': container.uuid, 'power_state': state})
+        LOG.info(_('Instance %(uuid)s is in state %(power_state)s') %
+                 {'uuid': container.uuid, 'power_state': state})
 
         # NOTE(imsplitbit): This is not ideal but it looks like nova uses
         # codes returned from libvirt and xen which don't correlate to
@@ -1169,11 +1167,11 @@ class OpenVzDriver(driver.ComputeDriver):
         Transfers the disk of a running instance in multiple phases, turning
         off the instance before the end.
         """
-        LOG.debug(_('Migration context: %s') % context)
-        LOG.debug(_('Migration instance: %s') % instance)
-        LOG.debug(_('Migration dest: %s') % dest)
-        LOG.debug(_('Migration instance_type: %s') % instance_type)
-        LOG.debug(_('Migration network_info: %s') % network_info)
+        LOG.info(_('Migration context: %s') % context)
+        LOG.info(_('Migration instance: %s') % instance)
+        LOG.info(_('Migration dest: %s') % dest)
+        LOG.info(_('Migration instance_type: %s') % instance_type)
+        LOG.info(_('Migration network_info: %s') % network_info)
 
         if not dest:
             LOG.error(_('No destination given to migration'))
@@ -1182,7 +1180,7 @@ class OpenVzDriver(driver.ComputeDriver):
 
         if dest == CONF.my_ip:
             # if this is an inplace resize we don't need to do any of this
-            LOG.debug(_('This is an inplace migration'))
+            LOG.info(_('This is an inplace migration'))
             instance.system_metadata['migration_type'] = 'resize_in_place'
             instance.save()
             return
@@ -1227,7 +1225,7 @@ class OpenVzDriver(driver.ComputeDriver):
         This performs a more complex but more secure migration using a pure
         python implemented vz migration driver.
         """
-        LOG.debug(_('Beginning pure python based migration'))
+        LOG.info(_('Beginning pure python based migration'))
         container = OvzContainer.find(uuid=instance['uuid'])
         mobj = ovz_migration.OVZMigration(
             container, network_info, block_device_info, dest, live_migration)
@@ -1257,11 +1255,11 @@ class OpenVzDriver(driver.ComputeDriver):
             cmd.append('-v')
         cmd.append(dest)
         cmd.append(instance['uuid'])
-        LOG.debug(
+        LOG.info(
             _('Beginning the migration of %(instance_id)s to %(dest)s') %
             {'instance_id': instance['uuid'], 'dest': dest})
         out = ovz_utils.execute(*cmd, run_as_root=True)
-        LOG.debug(_('Output from migration process: %s') % out)
+        LOG.info(_('Output from migration process: %s') % out)
 
     def finish_migration(self, context, migration, instance, disk_info,
                          network_info, image_meta, resize_instance,
@@ -1281,7 +1279,7 @@ class OpenVzDriver(driver.ComputeDriver):
         if migration_type == 'resize_in_place':
             # This is a resize on the same host so its simple, resize
             # in place and then exit the method
-            LOG.debug(_('Finishing resize-in-place for %s') % instance['uuid'])
+            LOG.info(_('Finishing resize-in-place for %s') % instance['uuid'])
             container = OvzContainer.find(uuid=instance['uuid'])
             self.resource_manager.configure_container_resources(context,
                 container, instance['instance_type_id'])
@@ -1318,15 +1316,15 @@ class OpenVzDriver(driver.ComputeDriver):
                 container, instance['instance_type_id'])
             self.resource_manager.configure_container_network(container,
                 network_info, is_migration=True)
-            LOG.debug(_('Resized instance after migration: %s') %
-                      instance['uuid'])
+            LOG.info(_('Resized instance after migration: %s') %
+                     instance['uuid'])
         else:
             LOG.debug(_('Regenerating TC rules for instance %s') %
                       instance['uuid'])
             self.resource_manager.configure_container_network(container,
                 network_info, is_migration=True)
-            LOG.debug(_('Regenerated TC rules for instance %s') %
-                      instance['uuid'])
+            LOG.info(_('Regenerated TC rules for instance %s') %
+                     instance['uuid'])
 
         if not live_migration:
             self._start(instance)
@@ -1373,7 +1371,7 @@ class OpenVzDriver(driver.ComputeDriver):
         # timer is better here, will check into it soon
         time.sleep(5)
         mobj.cleanup_destination()
-        LOG.debug(_('Finished python based finish_migration'))
+        LOG.info(_('Finished python based finish_migration'))
 
     def _vzmigrate_setup_dest_host(self, instance, network_info):
         """
@@ -1382,13 +1380,13 @@ class OpenVzDriver(driver.ComputeDriver):
         """
         LOG.debug(_('Stopping instance: %s') % instance['uuid'])
         self._stop(instance)
-        LOG.debug(_('Stopped instance: %s') % instance['uuid'])
+        LOG.info(_('Stopped instance: %s') % instance['uuid'])
 
         self.plug_vifs(instance, network_info)
 
         LOG.debug(_('Starting instance: %s') % instance['uuid'])
         self._start(instance)
-        LOG.debug(_('Started instance: %s') % instance['uuid'])
+        LOG.info(_('Started instance: %s') % instance['uuid'])
 
     def confirm_migration(self, migration, instance, network_info):
         """
@@ -1414,7 +1412,7 @@ class OpenVzDriver(driver.ComputeDriver):
                                                       'migration_type'):
                 LOG.debug(_('Removed migration_type metadata'))
             else:
-                LOG.debug(_('Failed to remove migration_type metadata'))
+                LOG.warn(_('Failed to remove migration_type metadata'))
             return
 
         try:
@@ -1428,7 +1426,7 @@ class OpenVzDriver(driver.ComputeDriver):
                 status = self.get_info(instance)['state']
 
             if status == power_state.SHUTDOWN:
-                LOG.debug(_('Cleaning up migration on source host'))
+                LOG.info(_('Cleaning up migration on source host'))
                 mobj = ovz_migration.OVZMigration(
                     container, ovz_utils.generate_network_dict(
                         container, network_info), None, live_migration)
@@ -1447,7 +1445,7 @@ class OpenVzDriver(driver.ComputeDriver):
                 instance['uuid'])
         except exception.InstanceUnacceptable:
             LOG.error(_('Failed to stop and destroy the instance'))
-        LOG.debug(_('Finished confirm migration for %s') % instance['uuid'])
+        LOG.info(_('Finished confirm migration for %s') % instance['uuid'])
 
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
@@ -1461,8 +1459,8 @@ class OpenVzDriver(driver.ComputeDriver):
         if migration_type == 'resize_in_place':
             # This is a resize on the same host so its simple, resize
             # in place and then exit the method
-            LOG.debug(_('Reverting in-place migration for %s') %
-                      instance['id'])
+            LOG.info(_('Reverting in-place migration for %s') %
+                     instance['id'])
             self.resource_manager.configure_container_resources(context,
                 container, instance['instance_type_id'])
             self.resource_manager.configure_container_network(container,
@@ -1470,20 +1468,20 @@ class OpenVzDriver(driver.ComputeDriver):
             if ovz_utils.remove_instance_metadata_key(instance['id'],
                                                       'migration_type'):
                 LOG.debug(_('Removed migration_type metadata'))
-                LOG.debug(_('Done reverting in-place migration for %s') %
-                          instance['uuid'])
+                LOG.info(_('Done reverting in-place migration for %s') %
+                         instance['uuid'])
             else:
-                LOG.debug(_('Failed to remove migration_type metadata'))
+                LOG.warn(_('Failed to remove migration_type metadata'))
             return
 
         container.save_ovz_metadata()
         if block_device_info:
-            LOG.debug(_('Instance %s has volumes') % instance['id'])
+            LOG.info(_('Instance %s has volumes') % instance['id'])
             # the instance has external volumes and was not a live migration
             # so we need to reattach external volumes
             live_migration = False
-            LOG.debug(_('Starting instance %s, after revert') %
-                      instance['uuid'])
+            LOG.info(_('Starting instance %s, after revert') %
+                     instance['uuid'])
             ext_str = ext_storage.OVZExtStorage(container.ovz_id)
 
             for mountpoint, connection_info in ext_str.volumes():
@@ -1491,9 +1489,9 @@ class OpenVzDriver(driver.ComputeDriver):
 
             self._start(instance)
         else:
-            LOG.debug(_('Instance %s has no volumes') % instance['uuid'])
+            LOG.info(_('Instance %s has no volumes') % instance['uuid'])
             live_migration = True
-            LOG.debug(_('Resuming live migration for %s') % instance['uuid'])
+            LOG.info(_('Resuming live migration for %s') % instance['uuid'])
             self.resume(instance, network_info)
 
         mobj = ovz_migration.OVZMigration(
