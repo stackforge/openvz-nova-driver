@@ -1,5 +1,0 @@
-# Outgoing traffic control
-# Should only be run once at setup or all rules are wiped
-tc qdisc del dev ${host_iface} root
-tc qdisc add dev ${host_iface} root handle 1: htb default 10
-tc class add dev ${host_iface} parent 1: classid 1:1 htb rate ${line_speed}mbit ceil ${line_speed}mbit burst 15k

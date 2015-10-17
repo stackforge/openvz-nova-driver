@@ -1,6 +1,0 @@
-tc filter del dev ${host_iface} protocol ip parent 1:0 prio ${prio}
-tc class del dev ${host_iface} parent 1:1 classid 1:${prio} htb rate ${bandwidth}mbit
-tc qdisc delete dev ${host_iface} parent 1:${prio} handle ${prio}
-tc filter del dev ${vz_iface} protocol ip parent 1:0 prio ${prio}
-tc class del dev ${vz_iface} parent 1:1 classid 1:${prio} htb rate ${bandwidth}mbit
-tc qdisc delete dev ${vz_iface} parent 1:${prio} handle ${prio}
